@@ -1,83 +1,139 @@
 import SwiftUI
+import BuoyCore
 
-/// 浮标球：外环 = 最长窗口剩余比例；核心液面 = 当前窗口剩余比例；
-/// 呼吸缩放 + 波形滚动（DESIGN.md §8.1）。右上角红点 = 隐藏 provider 告警（逃逸徽标）。
+/// 浮标球：从 BallModel 渲染（DESIGN.md §8.3 形态 / §8.4 视觉编码 / §8.6 动画原语）。
+/// 外环 = 最长窗口剩余（月度 ambient）；核心液面 = 活跃窗口剩余 / 余额 ETA 健康度；
+/// 状态驱动动画：呼吸 / 抖动 / 慢闪 / 虚线脉冲 / 热气粒子。
 struct BallView: View {
-    let ringRemaining: Double?   // 0...1
-    let coreRemaining: Double?   // 0...1
-    let health: Double?
-    let coreLabel: String
-    var hasError: Bool = false
-    var showAlertBadge: Bool = false
-    /// 呼吸紧迫度 0...1（由核心窗口 ETA 映射；越接近耗尽呼吸越急，DESIGN.md §8.4）
-    var breathUrgency: Double = 0
-    /// 数据过期（拉取失败/陈旧）-> 球面变暗（DESIGN.md §8.4 stale 降级）
-    var isStale: Bool = false
+    let model: BallModel
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
             // urgency 0 -> 周期 ~2.4s 平静；1 -> ~0.7s 急促，幅度亦加大
-            let period = max(2.4 - 1.7 * breathUrgency, 0.5)
-            let amplitude = 0.025 + 0.02 * breathUrgency
+            let period = max(2.4 - 1.7 * model.breathUrgency, 0.5)
+            let amplitude = 0.025 + 0.02 * model.breathUrgency
             let breathe = 1 + amplitude * sin(time * .pi / period)
 
             ZStack {
-                // 外环轨道
-                Circle()
-                    .stroke(Color.primary.opacity(0.15), lineWidth: Theme.ringWidth)
-                // 外环：剩余比例（从顶部顺时针递减）
-                if let ringRemaining {
-                    Circle()
-                        .trim(from: 0, to: min(max(ringRemaining, 0), 1))
-                        .stroke(Theme.healthColor(health),
-                                style: StrokeStyle(lineWidth: Theme.ringWidth, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
+                ringLayer(time: time)
+                coreLayer(phase: time * 1.8)
+                centerTextLayer
+                badgeLayer(time: time)
+                if model.state == .fastBurn {
+                    HeatParticles(phase: time)
                 }
-                // 核心液面
-                coreView(phase: time * 1.8)
-                    .padding(Theme.coreInset)
-                // 中央文字：核心剩余百分比（错误时显示 !）
-                VStack(spacing: 0) {
-                    Text(hasError ? "!" : corePercentText)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                    Text(hasError ? "error" : coreLabel)
-                        .font(.system(size: 8))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                .padding(Theme.coreInset)
-                .shadow(color: .black.opacity(0.3), radius: 1, y: 1)
             }
             .scaleEffect(breathe)
-            .opacity(isStale ? 0.55 : 1.0)
-            .overlay(alignment: .topTrailing) {
-                if showAlertBadge {
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 12, height: 12)
-                        .overlay(Circle().stroke(.white, lineWidth: 1.5))
-                        .offset(x: -2, y: 2)
-                }
-            }
+            .offset(shakeOffset(time))
+            .opacity(displayOpacity(time))
         }
         .frame(width: Theme.ballSize, height: Theme.ballSize)
+        .overlay(alignment: .topTrailing) {
+            if let badge = model.currencyBadge {
+                Text(badge)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(2)
+                    .background(Circle().fill(.black.opacity(0.4)))
+                    .offset(x: -3, y: 3)
+            }
+        }
     }
 
-    private var corePercentText: String {
-        guard let coreRemaining else { return "--" }
-        return "\(Int((coreRemaining * 100).rounded()))%"
+    // MARK: - Ring（外环 = 月度，DESIGN.md §8.3）
+
+    @ViewBuilder
+    private func ringLayer(time: Double) -> some View {
+        switch model.mode {
+        case .balance, .cold:
+            // 余额球 / 冷启动：无外环进度，仅淡轨道
+            Circle().stroke(Color.primary.opacity(0.1), lineWidth: Theme.ringWidth)
+        case .error:
+            // 错误/陈旧：灰色虚线脉冲环（DESIGN.md §8.4 error）
+            let pulse = 0.4 + 0.3 * (0.5 + 0.5 * sin(time * .pi / 1.0))
+            Circle()
+                .stroke(Color.gray.opacity(pulse),
+                        style: StrokeStyle(lineWidth: Theme.ringWidth, lineCap: .round, dash: [6, 4]))
+        case .windowed:
+            Circle().stroke(Color.primary.opacity(0.15), lineWidth: Theme.ringWidth)
+            if let ringUsed = model.ringUsed {
+                Circle()
+                    .trim(from: 0, to: min(max(ringUsed, 0), 1))
+                    .stroke(Theme.healthColor(model.health),
+                            style: StrokeStyle(lineWidth: Theme.ringWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+        }
     }
 
-    private func coreView(phase: Double) -> some View {
+    // MARK: - Core / 液面（活跃窗口，DESIGN.md §8.3）
+
+    private func coreLayer(phase: Double) -> some View {
         ZStack {
             Circle().fill(.black.opacity(0.55))
-            if let coreRemaining {
+            if let coreRemaining = model.coreRemaining {
                 LiquidShape(level: coreRemaining, phase: phase)
-                    .fill(Theme.healthColor(health).gradient)
+                    .fill(Theme.stateColor(model.state).gradient)
                     .clipShape(Circle())
             }
             Circle().stroke(.white.opacity(0.2), lineWidth: 1)
         }
+        .padding(Theme.coreInset)
+    }
+
+    // MARK: - 中央文字
+
+    private var centerTextLayer: some View {
+        VStack(spacing: 0) {
+            Text(model.centerText)
+                .font(.system(size: model.mode == .balance ? 16 : 15,
+                              weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+            if !model.subText.isEmpty {
+                Text(model.subText)
+                    .font(.system(size: 8))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+        }
+        .padding(Theme.coreInset)
+        .shadow(color: .black.opacity(0.3), radius: 1, y: 1)
+    }
+
+    // MARK: - 逃逸徽标（DESIGN.md §8.1）
+
+    @ViewBuilder
+    private func badgeLayer(time: Double) -> some View {
+        let positions = BadgeLayout.positions(count: model.alertBadges.count, ballSize: Theme.ballSize)
+        ForEach(Array(positions.enumerated()), id: \.offset) { idx, pos in
+            if idx < model.alertBadges.count {
+                let badge = model.alertBadges[idx]
+                let theme = ProviderTheme.theme(for: badge.id)
+                let pulse = 0.65 + 0.35 * (0.5 + 0.5 * sin(time * .pi * 2 / 1.2))
+                Circle()
+                    .fill(theme.color.opacity(pulse))
+                    .frame(width: BadgeLayout.dotDiameter, height: BadgeLayout.dotDiameter)
+                    .overlay(Circle().stroke(.white, lineWidth: 1.5))
+                    .position(x: Theme.ballSize / 2 + pos.x,
+                              y: Theme.ballSize / 2 - pos.y) // y 翻转（view 原点左上）
+            }
+        }
+    }
+
+    // MARK: - 状态动画修饰（DESIGN.md §8.4）
+
+    /// near-depleted：轻微抖动
+    private func shakeOffset(_ time: Double) -> CGSize {
+        guard model.state == .nearDepleted else { return .zero }
+        return CGSize(width: 1.5 * sin(time * 18), height: 1.2 * sin(time * 13))
+    }
+
+    /// depleted：慢闪；stale：变暗；否则不透明
+    private func displayOpacity(_ time: Double) -> Double {
+        if model.state == .depleted {
+            return 0.55 + 0.45 * (0.5 + 0.5 * sin(time * .pi / 1.5)) // ~1.5s 慢闪
+        }
+        if model.isStale && model.state != .error { return 0.55 }
+        return 1.0
     }
 }
