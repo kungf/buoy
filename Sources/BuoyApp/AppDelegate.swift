@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ballController = BallPanelController(
             store: store,
             onOpenDashboard: { [weak self] in self?.toggleDashboard() },
-            onOpenDetail: { [weak self] in self?.openDetail() }
+            onOpenDetail: { [weak self] id in self?.openDetail(providerId: id) }
         )
         ballController?.show()
         setupStatusItem()
@@ -40,9 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dashboardController?.toggle()
     }
 
-    /// 双击球：打开当前展示 provider 的详情面板（DESIGN.md §8.5）
-    private func openDetail() {
-        detailController = ProviderDetailWindowController(store: store, providerId: store.displayProviderId)
+    /// 双击球：打开该 provider 的详情面板（DESIGN.md §8.5）
+    private func openDetail(providerId: String) {
+        detailController = ProviderDetailWindowController(store: store, providerId: providerId)
         detailController?.show()
     }
 

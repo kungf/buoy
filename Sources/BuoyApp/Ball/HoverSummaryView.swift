@@ -1,15 +1,16 @@
 import SwiftUI
 import BuoyCore
 
-/// hover 浮层：展示 provider 各窗口一行摘要（DESIGN.md §8.5 hover=popover）。
+/// Hover overlay: one row per window for the displayed provider (DESIGN.md §8.5 hover=popover).
 struct HoverSummaryView: View {
     @ObservedObject var store: UsageStore
+    let providerId: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(store.displayReport?.providerId ?? "--")
+            Text(providerId)
                 .font(.headline)
-            if let report = store.displayReport {
+            if let report = store.reports.first(where: { $0.providerId == providerId }) {
                 ForEach(report.quotas) { quota in
                     HStack {
                         Circle()
