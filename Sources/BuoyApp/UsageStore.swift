@@ -1,7 +1,7 @@
 import Foundation
 import BuoyCore
 
-/// 用量数据中心：真数据（轮询）或 mock 场景（BUOY_MOCK 环境变量，用于视觉测试）。
+/// 用量数据中心：真数据（per-provider 轮询 + 退避 + 持久化）或 mock 场景（BUOY_MOCK，视觉测试）。
 @MainActor
 final class UsageStore: ObservableObject {
     @Published private(set) var reports: [ProviderReport] = []
@@ -13,35 +13,51 @@ final class UsageStore: ObservableObject {
     @Published var coreQuotaId: String = "volcano.5h"
 
     private let providers: [String: any Provider]
-    private let pollInterval: TimeInterval
-    private var pollTimer: Timer?
-    /// 采样历史 + 燃烧率/ETA（DESIGN.md §7）。每次成功拉取后 ingest。
+    private var pollTasks: [String: Task<Void, Never>] = [:]
+    private var consecutiveFailures: [String: Int] = [:]
+    private let backoff = BackoffPolicy()
+    /// 采样历史 + 燃烧率/ETA（DESIGN.md §7）。每次成功拉取后 ingest；持久化到 cache.json。
     private var forecast = ForecastEngine()
 
-    init(providers: [any Provider] = [VolcanoProvider(), DeepSeekProvider()],
-         pollInterval: TimeInterval = 300) {
+    init(providers: [any Provider] = [VolcanoProvider(), DeepSeekProvider()]) {
         self.providers = Dictionary(providers.map { ($0.manifest.id, $0) },
                                     uniquingKeysWith: { first, _ in first })
-        self.pollInterval = pollInterval
     }
 
-    /// 启动：立即拉一次 + 周期轮询。BUOY_MOCK=<scenario> 时改用 mock 场景（不发网络请求）。
+    // MARK: - 启动 / 调度
+
+    /// 启动：加载缓存 + per-provider 轮询（错峰 + 退避）。BUOY_MOCK=<scenario> 走 mock 场景。
     func start() {
         if let scenario = ProcessInfo.processInfo.environment["BUOY_MOCK"] {
             loadMockScenario(scenario)
             return
         }
-        Task { await refresh() }
-        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.refresh()
+        loadCache()
+        let ids = providers.keys.sorted()
+        for (index, id) in ids.enumerated() {
+            guard let provider = providers[id] else { continue }
+            let base = provider.manifest.defaultPollInterval
+            pollTasks[id] = Task { [weak self] in
+                // 错峰：每个 provider 错开 5s 起步，避免齐刷刷打满网络（DESIGN.md §6）
+                try? await Task.sleep(for: .seconds(Double(index) * 5))
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    await self.fetchOne(id)
+                    let delay = self.backoff.delay(base: base, afterFailures: self.consecutiveFailures[id] ?? 0)
+                    try? await Task.sleep(for: .seconds(delay))
+                }
             }
         }
     }
 
+    func stop() {
+        pollTasks.values.forEach { $0.cancel() }
+        pollTasks.removeAll()
+    }
+
     /// 打开总面板时调用：数据太旧则补一次拉取
     func refreshIfStale(maxAge: TimeInterval = 60) {
-        guard pollTimer != nil else { return } // mock 模式不刷
+        guard !pollTasks.isEmpty else { return } // mock 模式不刷
         let oldest = reports.map(\.fetchedAt).min() ?? .distantPast
         if Date().timeIntervalSince(oldest) > maxAge {
             Task { await refresh() }
@@ -50,42 +66,40 @@ final class UsageStore: ObservableObject {
 
     // MARK: - 拉取
 
+    /// 手动刷新全部 provider（刷新按钮 / 回前台）。
     func refresh() async {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        await withTaskGroup(of: Void.self) { group in
+            for id in providers.keys {
+                group.addTask { [weak self] in await self?.fetchOne(id) }
+            }
+            for await _ in group {}
+        }
+    }
 
-        let config = CredentialStore.load()
-        // 并发拉取各 provider；单个失败不影响其他，且保留该 provider 旧数据
-        await withTaskGroup(of: (String, Result<ProviderReport, Error>?).self) { group in
-            for (id, provider) in providers {
-                group.addTask {
-                    guard let credential = CredentialStore.credential(for: id, from: config) else {
-                        return (id, nil)
-                    }
-                    do {
-                        return (id, .success(try await provider.fetchUsage(credential: credential)))
-                    } catch {
-                        return (id, .failure(error))
-                    }
-                }
-            }
-            for await (id, result) in group {
-                switch result {
-                case .success(let report):
-                    upsert(report)
-                    providerErrors[id] = nil
-                case .failure(let error):
-                    providerErrors[id] = Self.describe(error)
-                case .none:
-                    providerErrors[id] = "未配置凭证"
-                }
-            }
+    /// 拉取单个 provider。失败保留旧 report + 记录连续失败次数（驱动退避，DESIGN.md §6）。
+    private func fetchOne(_ id: String) async {
+        guard let provider = providers[id] else { return }
+        guard let credential = CredentialStore.credential(for: id, from: CredentialStore.load()) else {
+            providerErrors[id] = "未配置凭证"
+            return
+        }
+        do {
+            let report = try await provider.fetchUsage(credential: credential)
+            upsert(report)
+            providerErrors[id] = nil
+            consecutiveFailures[id] = 0
+            saveCache()
+        } catch {
+            consecutiveFailures[id] = (consecutiveFailures[id] ?? 0) + 1
+            providerErrors[id] = Self.describe(error)
         }
     }
 
     private func upsert(_ report: ProviderReport) {
-        forecast.ingest(report: report, pollInterval: pollInterval)
+        forecast.ingest(report: report, pollInterval: pollInterval(forProvider: report.providerId))
         var next = reports.filter { $0.providerId != report.providerId }
         next.append(report)
         reports = next.sorted { $0.providerId < $1.providerId }
@@ -103,7 +117,23 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    // MARK: - 持久化（DESIGN.md §6 本地缓存，重启不冷启动）
+
+    private func loadCache() {
+        guard let cache = CacheStore.load() else { return }
+        reports = cache.reports.sorted { $0.providerId < $1.providerId }
+        forecast = cache.forecast
+    }
+
+    private func saveCache() {
+        CacheStore.save(BuoyCache(reports: reports, forecast: forecast))
+    }
+
     // MARK: - 展示派生
+
+    private func pollInterval(forProvider id: String) -> TimeInterval {
+        providers[id]?.manifest.defaultPollInterval ?? 300
+    }
 
     var displayReport: ProviderReport? {
         reports.first { $0.providerId == displayProviderId } ?? reports.first
@@ -131,15 +161,26 @@ final class UsageStore: ObservableObject {
         providerErrors[displayReport?.providerId ?? displayProviderId]
     }
 
+    /// 展示数据是否过期（拉取失败 / 数据陈旧，DESIGN.md §6 降级 -> 球面 stale）。
+    var displayIsStale: Bool {
+        isStale(for: displayReport?.providerId ?? displayProviderId)
+    }
+
+    func isStale(for providerId: String) -> Bool {
+        guard let report = reports.first(where: { $0.providerId == providerId }) else { return false }
+        return Date().timeIntervalSince(report.fetchedAt) > pollInterval(forProvider: providerId) * 2
+    }
+
     /// 当前核心窗口的 ETA（球呼吸节奏用，DESIGN.md §8.4）。
     var coreEta: TimeInterval? {
         guard let quota = coreQuota else { return nil }
-        return forecast.eta(for: quota, pollInterval: pollInterval)
+        return forecast.eta(for: quota, pollInterval: pollInterval(forProvider: displayReport?.providerId ?? ""))
     }
 
     /// 单 quota 的 ETA（总面板展示）。
     func eta(for quota: Quota) -> TimeInterval? {
-        forecast.eta(for: quota, pollInterval: pollInterval)
+        let providerId = String(quota.id.prefix { $0 != "." })
+        return forecast.eta(for: quota, pollInterval: pollInterval(forProvider: providerId))
     }
 
     /// 单 quota 的采样序列（sparkline 用）。
@@ -149,8 +190,9 @@ final class UsageStore: ObservableObject {
 
     /// provider 级健康度（用真实 ETA，修复 balance 型恒 nil，DESIGN.md §7）。
     func healthScore(for report: ProviderReport) -> Double? {
+        let interval = pollInterval(forProvider: report.providerId)
         let etas: [String: TimeInterval?] = Dictionary(
-            report.quotas.map { ($0.id, forecast.eta(for: $0, pollInterval: pollInterval)) },
+            report.quotas.map { ($0.id, forecast.eta(for: $0, pollInterval: interval)) },
             uniquingKeysWith: { first, _ in first }
         )
         return HealthScore.providerScore(quotas: report.quotas, etas: etas)

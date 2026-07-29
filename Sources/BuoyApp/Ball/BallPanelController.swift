@@ -111,7 +111,8 @@ private struct BallRootView: View {
             coreLabel: shortLabel(store.coreQuota?.id ?? ""),
             hasError: store.displayError != nil && store.displayReport == nil,
             showAlertBadge: store.hasHiddenProviderAlert,
-            breathUrgency: breathUrgency(from: store.coreEta)
+            breathUrgency: breathUrgency(from: store.coreEta),
+            isStale: store.displayIsStale
         )
         .background(Circle().fill(.black.opacity(0.35)).blur(radius: 4))
     }

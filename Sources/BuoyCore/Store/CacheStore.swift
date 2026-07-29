@@ -1,0 +1,32 @@
+import Foundation
+
+/// 本地缓存（DESIGN.md §6：lastGoodReport + 样本环形 buffer 持久化，重启不冷启动）。
+/// 存 ~/.buoy/cache.json（仓库外，与 config.json 同目录；含 ProviderReport + ForecastEngine 样本）。
+public struct BuoyCache: Codable, Sendable, Equatable {
+    public let reports: [ProviderReport]
+    public let forecast: ForecastEngine
+
+    public init(reports: [ProviderReport], forecast: ForecastEngine) {
+        self.reports = reports
+        self.forecast = forecast
+    }
+}
+
+public enum CacheStore {
+    public static var defaultURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".buoy/cache.json")
+    }
+
+    public static func load(from url: URL = defaultURL) -> BuoyCache? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(BuoyCache.self, from: data)
+    }
+
+    public static func save(_ cache: BuoyCache, to url: URL = defaultURL) {
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+}

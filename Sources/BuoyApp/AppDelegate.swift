@@ -12,6 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleDashboard()
         })
         ballController?.show()
+        // 回前台立即刷新一次（DESIGN.md §6）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appBecameActive),
+            name: NSApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    @objc private func appBecameActive() {
+        Task { await store.refresh() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

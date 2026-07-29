@@ -1,7 +1,7 @@
 import Foundation
 
 /// 一次采样点
-public struct UsageSample: Sendable, Equatable {
+public struct UsageSample: Sendable, Equatable, Codable {
     public let at: Date
     public let used: Double
     public init(at: Date, used: Double) {
@@ -15,7 +15,7 @@ public struct UsageSample: Sendable, Equatable {
 ///  ① 未跨过 resetsAt（reset 后 Used 跳回 0，负 delta 丢弃）
 ///  ② 相邻 fetchedAt 间隔 < 3× 轮询周期（睡眠/唤醒空洞丢弃）
 /// 冷启动：有效样本不足 minSamples 时 ETA 为 nil（UI 显示 "--"，不触发预警）。
-public struct BurnRateEstimator: Sendable, Equatable {
+public struct BurnRateEstimator: Sendable, Equatable, Codable {
     public let minSamples: Int
     public let maxGapMultiplier: Double
 

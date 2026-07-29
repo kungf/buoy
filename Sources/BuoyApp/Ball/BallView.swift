@@ -11,6 +11,8 @@ struct BallView: View {
     var showAlertBadge: Bool = false
     /// 呼吸紧迫度 0...1（由核心窗口 ETA 映射；越接近耗尽呼吸越急，DESIGN.md §8.4）
     var breathUrgency: Double = 0
+    /// 数据过期（拉取失败/陈旧）-> 球面变暗（DESIGN.md §8.4 stale 降级）
+    var isStale: Bool = false
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
@@ -48,6 +50,7 @@ struct BallView: View {
                 .shadow(color: .black.opacity(0.3), radius: 1, y: 1)
             }
             .scaleEffect(breathe)
+            .opacity(isStale ? 0.55 : 1.0)
             .overlay(alignment: .topTrailing) {
                 if showAlertBadge {
                     Circle()

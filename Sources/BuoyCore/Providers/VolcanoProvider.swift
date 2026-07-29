@@ -10,7 +10,8 @@ public struct VolcanoProvider: Provider {
         displayName: "火山引擎",
         authMode: .volcSignature,
         defaultBaseURL: "https://open.volcengineapi.com",
-        allowsBaseURLOverride: true
+        allowsBaseURLOverride: true,
+        defaultPollInterval: 120
     )
     public let supportedQuotaTypes: [QuotaType] = [.timeWindowed]
 

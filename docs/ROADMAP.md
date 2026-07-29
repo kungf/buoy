@@ -67,14 +67,16 @@
 
 **关键设计**：balance 型用 `-remaining` 作采样代理量，复用 `BurnRateEstimator` 已有 reset 启发式，顺带实现了 DESIGN §13 的"充值跳崖基线重置"（Phase 2.4 提前达成），未改动 estimator 一行。
 
-### Phase 2 - 调度与持久化（预测的基础设施）
+### Phase 2 - 调度与持久化（预测的基础设施）✅ 基本完成（2026-07-28）
 
 预测要跨重启有意义，必须有样本持久化与 per-provider 调度。
 
-- [ ] **2.1 PollScheduler**：per-provider timer + 错峰；429/5xx 指数退避（上限 5 次）；App 回前台立即刷新一次。
-- [ ] **2.2 降级**：拉取失败 -> 显示 `lastGoodReport` + 球面 stale 脉冲；连续失败 N 次切 error 态。
-- [ ] **2.3 持久化**：本地 JSON 存最近成功 report + 样本环形 buffer（`~/.buoy/cache.json` 或 `Application Support`）；启动即加载，避免冷启动。
-- [ ] **2.4 DeepSeek 跳崖识别**：`granted_balance` 到期归零导致余额突变（非消耗性）-> 重置燃烧率基线，不误报 fast-burn（DESIGN §13）。
+- [x] **2.1 PollScheduler**：per-provider `Task` 轮询 + 错峰（5s 起步偏移）+ `BackoffPolicy` 指数退避（2^n，上限 5x，5 次进 error 态）；回前台 `didBecomeActiveNotification` 立即刷新。
+- [x] **2.2 降级**：拉取失败保留旧 report（lastGoodReport）+ 球面 stale 变暗（`displayIsStale`）；连续失败次数驱动退避。⚠️ "N 次切 error 态"的独立球面视觉（虚线脉冲）留待 Phase 5 状态动画。
+- [x] **2.3 持久化**：`CacheStore` 存 `~/.buoy/cache.json`（`BuoyCache = reports + ForecastEngine`）；启动加载，每次成功拉取后保存。重启不冷启动。
+- [x] **2.4 DeepSeek 跳崖识别**：Phase 1 已用 `-remaining` 代理量 + reset 启发式实现（充值回升 -> 断段重置基线）。
+
+新增 `BackoffPolicy` / `CacheStore` / `BuoyCache`（BuoyCore Store/），`ForecastEngine`/`BurnRateEstimator`/`UsageSample` 加 `Codable`。`swift test` 33/33 ✅。
 
 ### Phase 3 - Keychain 迁移（安全，M2 并行）
 

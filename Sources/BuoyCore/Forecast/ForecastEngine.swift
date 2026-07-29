@@ -10,7 +10,7 @@ import Foundation
 /// - balance：用 `-remaining`。余额消耗时 remaining 递减 -> `-remaining` 递增；充值/赠送到期回升
 ///   时 remaining 跳升 -> `-remaining` 回落 -> 触发断段（即 DESIGN §13 的"跳崖识别"基线重置）。
 ///   这样复用已有 reset 启发式，无需改动 BurnRateEstimator。
-public struct ForecastEngine: Sendable, Equatable {
+public struct ForecastEngine: Sendable, Equatable, Codable {
     private var samplesByQuota: [String: [UsageSample]] = [:]
     public let maxSamplesPerQuota: Int
     public let estimator: BurnRateEstimator
