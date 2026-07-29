@@ -73,4 +73,38 @@ final class BallModelTests: XCTestCase {
         let secondary = store.ballModel(for: "deepseek")
         XCTAssertTrue(secondary.alertBadges.isEmpty)
     }
+
+    // MARK: balance ball: last-5h spend + balance (ETA dropped)
+
+    func test_balanceModel_showsSpendAndBalance_noETA() {
+        // balance-critical seeds a declining series: remaining 3.5 -> 2.5 -> 1.5 -> 0.5.
+        let model = store(scenario: "balance-critical").ballModel(for: "deepseek")
+        XCTAssertEqual(model.mode, .balance)
+        XCTAssertEqual(model.centerText, "0.50")           // balance (big, lower)
+        XCTAssertEqual(model.spentRecentText, "¥3.00·5h")  // 5h spend (small, upper)
+        XCTAssertEqual(model.subText, "")                   // ETA dropped
+        XCTAssertEqual(model.currencyBadge, "¥")
+    }
+
+    func test_balanceModel_breathIsConsumedOverRemaining() {
+        // consumed 3.0 / remaining 0.5 = 6.0 -> clamped to 1.0 (urgent, explosion-free).
+        let model = store(scenario: "balance-critical").ballModel(for: "deepseek")
+        XCTAssertEqual(model.breathUrgency, 1.0, accuracy: 1e-9)
+    }
+
+    func test_balanceModel_coreLevelIsRemainingOverHighWater() {
+        // remaining 0.5 / highWater 3.5 -> liquid level decoupled from breathing.
+        let model = store(scenario: "balance-critical").ballModel(for: "deepseek")
+        XCTAssertEqual(model.coreLevel ?? -1, 0.5 / 3.5, accuracy: 1e-9)
+        XCTAssertEqual(model.coreHealth ?? -1, 0.5 / 3.5, accuracy: 1e-9)
+    }
+
+    func test_balanceModel_staticBalance_calmBreath_dashSpend() {
+        // healthy: deepseek balance is static (no forecast samples) -> calm, dash, full liquid.
+        let model = store(scenario: "healthy").ballModel(for: "deepseek")
+        XCTAssertEqual(model.mode, .balance)
+        XCTAssertEqual(model.breathUrgency, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(model.spentRecentText, "--")
+        XCTAssertEqual(model.coreLevel ?? -1, 1.0, accuracy: 1e-9)
+    }
 }

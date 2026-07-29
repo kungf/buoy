@@ -123,4 +123,88 @@ final class ForecastEngineTests: XCTestCase {
 
         XCTAssertTrue(engine.samples(for: "x.rpm").isEmpty)
     }
+
+    // MARK: - consumed (5h window spend, top-up-robust)
+
+    private let fiveHours: TimeInterval = 5 * 3600
+
+    private func balanceQuota(_ remaining: Double) -> Quota {
+        Quota(id: "deepseek.balance", type: .balance, label: "balance", unit: .cny, remaining: remaining)
+    }
+
+    func testConsumedSteadyAccumulation() {
+        // Arrange: remaining 100->98->96->94, -2 every 120s
+        var engine = ForecastEngine()
+        engine.ingest(report: balanceReport(remaining: 100, at: t0), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 98, at: t0.addingTimeInterval(120)), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 96, at: t0.addingTimeInterval(240)), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 94, at: t0.addingTimeInterval(360)), pollInterval: poll)
+
+        // Act: spent = 2 + 2 + 2 = 6
+        let consumed = engine.consumed(for: balanceQuota(94), windowSeconds: fiveHours, now: t0.addingTimeInterval(360))
+
+        // Assert
+        XCTAssertEqual(consumed ?? 0, 6, accuracy: 1e-9)
+    }
+
+    func testConsumedTopUpIgnored() {
+        // Arrange: spend 100->98->96, top up to 200, spend to 198
+        var engine = ForecastEngine()
+        engine.ingest(report: balanceReport(remaining: 100, at: t0), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 98, at: t0.addingTimeInterval(120)), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 96, at: t0.addingTimeInterval(240)), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 200, at: t0.addingTimeInterval(360)), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 198, at: t0.addingTimeInterval(480)), pollInterval: poll)
+
+        // Act: spent = 2 + 2 + 0 (top-up) + 2 = 6 (top-up does not pollute)
+        let consumed = engine.consumed(for: balanceQuota(198), windowSeconds: fiveHours, now: t0.addingTimeInterval(480))
+
+        // Assert
+        XCTAssertEqual(consumed ?? 0, 6, accuracy: 1e-9)
+    }
+
+    func testConsumedFlatReturnsZero() {
+        // Arrange: balance unchanged across samples
+        var engine = ForecastEngine()
+        for i in 0..<4 {
+            engine.ingest(report: balanceReport(remaining: 100, at: t0.addingTimeInterval(Double(i) * 120)),
+                          pollInterval: poll)
+        }
+
+        // Act
+        let consumed = engine.consumed(for: balanceQuota(100), windowSeconds: fiveHours, now: t0.addingTimeInterval(360))
+
+        // Assert: samples present but no spend -> 0 (not nil)
+        XCTAssertEqual(consumed ?? -1, 0, accuracy: 1e-9)
+    }
+
+    func testConsumedInsufficientSamplesReturnsNil() {
+        // Arrange: only one sample
+        var engine = ForecastEngine()
+        engine.ingest(report: balanceReport(remaining: 100, at: t0), pollInterval: poll)
+
+        // Act
+        let consumed = engine.consumed(for: balanceQuota(100), windowSeconds: fiveHours, now: t0)
+
+        // Assert
+        XCTAssertNil(consumed)
+    }
+
+    func testConsumedExcludesSamplesOutsideWindow() {
+        // Arrange: early samples fall outside the 5h window; only the latest pair is inside
+        var engine = ForecastEngine()
+        engine.ingest(report: balanceReport(remaining: 100, at: t0), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 98, at: t0.addingTimeInterval(120)), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 96, at: t0.addingTimeInterval(240)), pollInterval: poll)
+        // A fresh pair 6h later
+        let late = t0.addingTimeInterval(6 * 3600)
+        engine.ingest(report: balanceReport(remaining: 94, at: late), pollInterval: poll)
+        engine.ingest(report: balanceReport(remaining: 92, at: late.addingTimeInterval(120)), pollInterval: poll)
+
+        // Act: now at the last sample; 5h window holds only 94/92 -> spent = 2
+        let consumed = engine.consumed(for: balanceQuota(92), windowSeconds: fiveHours, now: late.addingTimeInterval(120))
+
+        // Assert
+        XCTAssertEqual(consumed ?? 0, 2, accuracy: 1e-9)
+    }
 }

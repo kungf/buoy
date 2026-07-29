@@ -43,6 +43,8 @@ struct BallModel: Equatable {
     let centerText: String
     /// Sub text: "5h" | "~3.2d" | "error" | ""
     let subText: String
+    /// Recent spend text for balance mode (upper, small), e.g. "¥0.32·5h" or "--". nil otherwise.
+    let spentRecentText: String?
     /// Currency badge: "¥" | "$" | nil (balance only)
     let currencyBadge: String?
     /// Ball state: drives animation only (breathing / shake / slow-blink / particles), not color
