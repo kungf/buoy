@@ -1,0 +1,17 @@
+# 构建产物
+.build/
+build/
+DerivedData/
+*.xcodeproj
+.swiftpm/
+
+# 本地配置与凭证（token 永不入仓库）
+*.local
+config.json
+.env
+.env.*
+secrets/
+
+# 工具产物（playwright MCP 快照、macOS 元数据）
+.playwright-mcp/
+.DS_Store
