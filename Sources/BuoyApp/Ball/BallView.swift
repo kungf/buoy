@@ -1,22 +1,27 @@
 import SwiftUI
 import BuoyCore
 
-/// 浮标球：从 BallModel 渲染（DESIGN.md §8.3 形态 / §8.4 视觉编码 / §8.6 动画原语）。
-/// 外环 = 最长窗口剩余（月度 ambient）；核心液面 = 活跃窗口剩余 / 余额 ETA 健康度；
-/// 状态驱动动画：呼吸 / 抖动 / 慢闪 / 虚线脉冲 / 热气粒子。
+/// Floating ball rendered from `BallModel` (DESIGN.md §8.3 form / §8.4 visual encoding / §8.6 animation).
+/// Outer ring = longest window used (30d ambient); middle ring = 7d used; core liquid = active
+/// window used / balance ETA health. Each channel is colored by its OWN remaining health
+/// (green -> orange -> red), never by `state`. State drives animation only:
+/// breathing / shake / slow-blink / dashed pulse / heat particles.
 struct BallView: View {
     let model: BallModel
+    /// Which provider this ball represents; drives the bottom nameplate short code.
+    let providerId: String
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
-            // urgency 0 -> 周期 ~2.4s 平静；1 -> ~0.7s 急促，幅度亦加大
+            // urgency 0 -> ~2.4s calm period; 1 -> ~0.7s urgent, larger amplitude
             let period = max(2.4 - 1.7 * model.breathUrgency, 0.5)
             let amplitude = 0.025 + 0.02 * model.breathUrgency
             let breathe = 1 + amplitude * sin(time * .pi / period)
 
             ZStack {
                 ringLayer(time: time)
+                midRingLayer()
                 coreLayer(phase: time * 1.8)
                 centerTextLayer
                 badgeLayer(time: time)
@@ -27,8 +32,12 @@ struct BallView: View {
             .scaleEffect(breathe)
             .offset(shakeOffset(time))
             .opacity(displayOpacity(time))
+            // Ball content is sized to `ballSize`; the outer canvas frame (`canvasSize`) centers
+            // it and leaves margin so the ring stroke / breathing / shake are not clipped by the
+            // square panel (fixes "ball looks cropped on all sides").
+            .frame(width: Theme.ballSize, height: Theme.ballSize)
         }
-        .frame(width: Theme.ballSize, height: Theme.ballSize)
+        .frame(width: Theme.canvasSize, height: Theme.canvasSize)
         .overlay(alignment: .topTrailing) {
             if let badge = model.currencyBadge {
                 Text(badge)
@@ -39,18 +48,21 @@ struct BallView: View {
                     .offset(x: -3, y: 3)
             }
         }
+        .overlay(alignment: .bottom) {
+            nameplateLayer
+        }
     }
 
-    // MARK: - Ring（外环 = 月度，DESIGN.md §8.3）
+    // MARK: - Outer ring (30d, DESIGN.md §8.3)
 
     @ViewBuilder
     private func ringLayer(time: Double) -> some View {
         switch model.mode {
         case .balance, .cold:
-            // 余额球 / 冷启动：无外环进度，仅淡轨道
+            // Balance / cold start: no outer-ring progress, just a faint track
             Circle().stroke(Color.primary.opacity(0.1), lineWidth: Theme.ringWidth)
         case .error:
-            // 错误/陈旧：灰色虚线脉冲环（DESIGN.md §8.4 error）
+            // Error / stale: gray dashed pulsing ring (DESIGN.md §8.4 error)
             let pulse = 0.4 + 0.3 * (0.5 + 0.5 * sin(time * .pi / 1.0))
             Circle()
                 .stroke(Color.gray.opacity(pulse),
@@ -60,21 +72,38 @@ struct BallView: View {
             if let ringUsed = model.ringUsed {
                 Circle()
                     .trim(from: 0, to: min(max(ringUsed, 0), 1))
-                    .stroke(Theme.healthColor(model.health),
+                    .stroke(Theme.healthColor(model.ringHealth),
                             style: StrokeStyle(lineWidth: Theme.ringWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
     }
 
-    // MARK: - Core / 液面（活跃窗口，DESIGN.md §8.3）
+    // MARK: - Middle ring (7d)
+
+    /// Second concentric ring for the 7-day window. Only drawn for windowed providers that have a
+    /// 7d quota; inset inside the outer ring. Colored by the 7d remaining health.
+    @ViewBuilder
+    private func midRingLayer() -> some View {
+        if model.mode == .windowed, let midUsed = model.midRingUsed {
+            Circle().inset(by: Theme.midRingSpacing)
+                .stroke(Color.primary.opacity(0.1), lineWidth: Theme.midRingWidth)
+            Circle().inset(by: Theme.midRingSpacing)
+                .trim(from: 0, to: min(max(midUsed, 0), 1))
+                .stroke(Theme.healthColor(model.midRingHealth),
+                        style: StrokeStyle(lineWidth: Theme.midRingWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+    }
+
+    // MARK: - Core / liquid (active window, DESIGN.md §8.3)
 
     private func coreLayer(phase: Double) -> some View {
         ZStack {
             Circle().fill(.black.opacity(0.55))
-            if let coreRemaining = model.coreRemaining {
-                LiquidShape(level: coreRemaining, phase: phase)
-                    .fill(Theme.stateColor(model.state).gradient)
+            if let coreLevel = model.coreLevel {
+                LiquidShape(level: coreLevel, phase: phase)
+                    .fill(Theme.healthColor(model.coreHealth).gradient)
                     .clipShape(Circle())
             }
             Circle().stroke(.white.opacity(0.2), lineWidth: 1)
@@ -82,7 +111,7 @@ struct BallView: View {
         .padding(Theme.coreInset)
     }
 
-    // MARK: - 中央文字
+    // MARK: - Center text
 
     private var centerTextLayer: some View {
         VStack(spacing: 0) {
@@ -100,7 +129,27 @@ struct BallView: View {
         .shadow(color: .black.opacity(0.3), radius: 1, y: 1)
     }
 
-    // MARK: - 逃逸徽标（DESIGN.md §8.1）
+    // MARK: - Provider nameplate (bottom of the ball)
+
+    /// Tiny capsule at the ball's bottom rim showing the provider short code (e.g. "ds", "vol"),
+    /// so each independent ball is identifiable. Straddles the rim; does not breathe (kept outside
+    /// the TimelineView-scaled ZStack). Draws nothing for a blank id.
+    @ViewBuilder
+    private var nameplateLayer: some View {
+        let name = ProviderTheme.shortName(for: providerId)
+        if !name.isEmpty {
+            Text(name)
+                .font(.system(size: Theme.nameplateFontSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.95))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(.black.opacity(0.55)))
+                .overlay(Capsule().stroke(.white.opacity(0.25), lineWidth: 0.5))
+                .offset(y: Theme.nameplateOffsetY)
+        }
+    }
+
+    // MARK: - Escape badges (DESIGN.md §8.1)
 
     @ViewBuilder
     private func badgeLayer(time: Double) -> some View {
@@ -115,23 +164,23 @@ struct BallView: View {
                     .frame(width: BadgeLayout.dotDiameter, height: BadgeLayout.dotDiameter)
                     .overlay(Circle().stroke(.white, lineWidth: 1.5))
                     .position(x: Theme.ballSize / 2 + pos.x,
-                              y: Theme.ballSize / 2 - pos.y) // y 翻转（view 原点左上）
+                              y: Theme.ballSize / 2 - pos.y) // y flipped (view origin top-left)
             }
         }
     }
 
-    // MARK: - 状态动画修饰（DESIGN.md §8.4）
+    // MARK: - State-driven animation modifiers (DESIGN.md §8.4)
 
-    /// near-depleted：轻微抖动
+    /// near-depleted: slight shake
     private func shakeOffset(_ time: Double) -> CGSize {
         guard model.state == .nearDepleted else { return .zero }
         return CGSize(width: 1.5 * sin(time * 18), height: 1.2 * sin(time * 13))
     }
 
-    /// depleted：慢闪；stale：变暗；否则不透明
+    /// depleted: slow blink; stale: dimmed; otherwise fully opaque
     private func displayOpacity(_ time: Double) -> Double {
         if model.state == .depleted {
-            return 0.55 + 0.45 * (0.5 + 0.5 * sin(time * .pi / 1.5)) // ~1.5s 慢闪
+            return 0.55 + 0.45 * (0.5 + 0.5 * sin(time * .pi / 1.5)) // ~1.5s slow blink
         }
         if model.isStale && model.state != .error { return 0.55 }
         return 1.0

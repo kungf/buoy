@@ -1,7 +1,7 @@
 import SwiftUI
 import BuoyCore
 
-/// 总面板：手风琴布局（DESIGN.md §8.2）。顶部 = 刷新 / 展示模式 / pin；预警条条件出现。
+/// Dashboard: accordion layout (DESIGN.md §8.2). Top = refresh / pin; alert bar appears conditionally.
 struct DashboardView: View {
     @ObservedObject var store: UsageStore
     var onTogglePin: (Bool) -> Void = { _ in }
@@ -24,14 +24,6 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("立即刷新")
-                Picker("展示", selection: $store.displayMode) {
-                    ForEach(DisplayMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 90)
-                .help("球面展示模式")
                 Button {
                     isPinned.toggle()
                     onTogglePin(isPinned)
@@ -42,10 +34,10 @@ struct DashboardView: View {
                 .help(isPinned ? "取消常驻" : "常驻置顶")
             }
 
-            // 预警条（DESIGN.md §8.2）：非展示 provider 告急时出现，点击切到该 provider
+            // Alert bar (DESIGN.md §8.2): appears when a non-displayed provider is alerting; tap adds it.
             if !store.alertBadges.isEmpty {
                 AlertBar(store: store) { id in
-                    store.pinDisplay(to: id)
+                    store.addToSelection(id)
                     expanded.insert(id)
                 }
             }
@@ -61,7 +53,7 @@ struct DashboardView: View {
                             onToggle: { toggle(report.providerId) }
                         )
                     }
-                    // 有错误但从未拿到数据的 provider（不出现在 reports 里）
+                    // Providers with an error but never fetched (not present in reports)
                     ForEach(store.providerErrors.keys.sorted().filter { id in
                         !store.reports.contains { $0.providerId == id }
                     }, id: \.self) { id in
@@ -69,6 +61,15 @@ struct DashboardView: View {
                             Circle().fill(.gray).frame(width: 8, height: 8)
                             Text(id).font(.subheadline.weight(.medium))
                             Spacer()
+                            Button {
+                                store.toggleSelection(id)
+                            } label: {
+                                Image(systemName: store.isSelected(id) ? "eye.fill" : "eye")
+                                    .font(.caption)
+                                    .foregroundStyle(store.isSelected(id) ? Color.accentColor : Color.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help(store.isSelected(id) ? "球面显示中，点击移除" : "加入球面")
                             Text(store.providerErrors[id] ?? "")
                                 .font(.caption)
                                 .foregroundStyle(.red)
@@ -97,7 +98,7 @@ struct DashboardView: View {
     }
 }
 
-/// 预警条（DESIGN.md §8.2）：堆叠的活跃告警，底色随严重度。
+/// Alert bar (DESIGN.md §8.2): stacked active alerts, tinted by severity.
 private struct AlertBar: View {
     @ObservedObject var store: UsageStore
     let onTap: (String) -> Void
@@ -143,7 +144,8 @@ private struct AlertBar: View {
     }
 }
 
-/// 单个 provider 的手风琴分区：头部 = 名称 + 健康点 + 主指标；展开 = 各 quota 行 + 抓取时间。
+/// Accordion section for a single provider: header = name + health dot + primary metric;
+/// expanded = per-quota rows + fetch time.
 private struct ProviderSection: View {
     let store: UsageStore
     let report: ProviderReport
@@ -166,6 +168,15 @@ private struct ProviderSection: View {
                     Text(primaryMetric)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
+                    Button {
+                        store.toggleSelection(report.providerId)
+                    } label: {
+                        Image(systemName: store.isSelected(report.providerId) ? "eye.fill" : "eye")
+                            .font(.caption)
+                            .foregroundStyle(store.isSelected(report.providerId) ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(store.isSelected(report.providerId) ? "球面显示中，点击移除" : "加入球面")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -228,8 +239,8 @@ private struct ProviderSection: View {
     }
 }
 
-/// 单条 quota：label + 进度条 + 用量文本 + reset 时刻（DESIGN.md §8.5 详情/sparkline）。
-/// internal 供 ProviderDetailView 复用。
+/// A single quota row: label + progress bar + usage text + reset time (DESIGN.md §8.5 detail/sparkline).
+/// internal so ProviderDetailView can reuse it.
 struct QuotaRow: View {
     let quota: Quota
     let eta: TimeInterval?

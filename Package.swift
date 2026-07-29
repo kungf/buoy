@@ -29,5 +29,10 @@ let package = Package(
             dependencies: ["BuoyCore"],
             path: "Tests/BuoyCoreTests"
         ),
+        .testTarget(
+            name: "BuoyAppTests",
+            dependencies: ["BuoyApp"],
+            path: "Tests/BuoyAppTests"
+        ),
     ]
 )

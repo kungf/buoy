@@ -319,16 +319,14 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
 
 ## 8. 悬浮小球 UI / 动画
 
-### 8.1 多 provider 展示模型：单球聚焦 + 总面板
+### 8.1 多 provider 展示模型：多选小球簇 + 总面板
 
-**球面同一时刻只展示一个 provider**——多球并存排布混乱、违背 Glanceable；全部启用 provider 的轮询与预警仍在后台照常运行。
+**球面展示哪些 provider 由用户在总面板多选决定**——选中几个就在悬浮球上横向排列几个独立小球（小球簇）；每个球各自承载一个 provider 的环+核+数字，信息不丢。全部启用 provider 的轮询与预警仍在后台照常运行。
 
-- **展示模式**（设置可选）：
-  - `固定`：用户钉选一个 provider 上球。
-  - `最紧`（默认）：自动展示 health score（见 §7）最差的 provider；换脸时带过渡动画，"球变样了"本身即是强提示。
-  - `轮播`：定时切换，默认关（频繁换脸会干扰"肌肉记忆式一瞥"）。
-- **逃逸徽章（alert badge）**：任一**非展示** provider 进入 fast-burn / near-depleted / depleted 时，球边缘出现该 provider 主题色小圆点 + 微脉冲；点击徽章直接切到该 provider 视图。这是单球聚焦模式下"快烧预警"在球面上的最后一道保险（系统通知不受影响，照常推送）。
-- **总面板**：单击球（或菜单栏图标）打开。每个启用 provider 一张卡片：环+核缩略图、各窗口百分比 + ETA、sparkline；点卡片进入该 provider 详情页。布局与交互详见 §8.2。
+- **多选上球**：总面板每个 provider 卡片有“眼睛”开关，勾选即上球、取消即移除；选中数量 = 球面小球数量。选中集合持久化到 UserDefaults，重启保留。
+- **默认选择**：首次打开（未配置）默认仅选中第一个 provider（按 provider 初始化顺序，当前 = 火山）；用户调整后按其配置显示。
+- **突破徽章（alert badge）**：任一**未选中** provider 进入 fast-burn / near-depleted / depleted / error 时，簇右上角出现该 provider 主题色小圆点 + 微脉冲；点击徽章把该 provider 加入簇（冒出新球）。这是“默认只选第一个”下漏警的最后一道保险（系统通知不受影响，照常推送）。
+- **总面板**：单击球（或菜单栏图标）打开。每个启用 provider 一张卡片：环+核缩略图、各窗口百分比 + ETA、sparkline、上球开关；点卡片进入该 provider 详情页。布局与交互详见 §8.2。
 
 ### 8.2 总面板布局：手风琴列表
 
@@ -363,7 +361,7 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
    - **单击**行头展开 / 收起；**双击**行头 = 该 provider 详情面板（与球的双击手势一致）。
 
 ### 8.3 形态：环 + 核（一眼月度 + 翻阅 5h）
-一个圆球（直径 ~64pt，可调）分两层承载两个时间尺度：
+每个选中 provider 一个圆球（直径 ~64pt，可调），横向排成小球簇（§8.1）；单球分两层承载两个时间尺度：
 
 - **外环（Ring）= 月度 30d，常驻**
   - 进度环 = 30d 已用 %，颜色随 % 绿->黄->红；慢变量、ambient。
@@ -396,7 +394,7 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
 - 液面用 `TimelineView` + `Canvas` 绘制波浪 + 微噪声。
 
 ### 8.5 交互（翻阅 5h）
-手势消歧后的唯一映射（每个手势只有一个含义）：
+手势消歧后的唯一映射（每个手势只有一个含义）。簇内多球时，以下手势均作用到鼠标所在的那颗球对应的 provider：
 
 - **hover**：小 popover（provider 名 + 5h/7d/30d 三百分比 + 各自 ETA）。
 - **单击**：打开总面板（所有启用 provider 一览，见 §8.1）。
@@ -405,7 +403,7 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
   - 每行一条 **sparkline 燃烧率曲线**（最近 N 个采样点 Used 走势）--这就是"翻阅 5h 使用情况"的历史，能看出"刚才那拨是不是烧得特别快"。
 - **滚轮**：内核在 `5h ↔ 7d` 间切（外环月度不变）。
 - **拖动**：移动球体；靠近屏幕边缘自动吸附并半隐为贴边小条，hover 时展开。
-- **right-click**：菜单（刷新 / 暂停轮询 / 穿透模式开关 / 打开设置 / 隐藏）。
+- **right-click**：菜单（刷新 / 暂停轮询 / 穿透模式开关 / 打开总面板 / 打开该 provider 详情 / 从球上移除（或加入）该 provider / 隐藏球）。
 - **穿透模式**：设置 / 右键菜单可切换。开启时球体鼠标穿透、不响应任何交互，仅作 ambient 显示；默认关闭（交互模式）。
 
 ### 8.6 动画原语
@@ -423,7 +421,7 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
 - **volcSignature 模式**（火山）：填 Base URL + AccessKey + SecretKey，AK/SK 直接写 Keychain。
 - **consoleSession 模式**（无 API 的 provider 兜底）：只预填控制台地址，配一个"登录"按钮 -> 唤起内嵌 WKWebView 完成登录；显示 session 状态。
 - 窗口定义 / 解析逻辑内置，不向用户索要额度上限等。
-- 外观：球大小、透明度、主题色、是否开机自启、内核默认窗口（5h / 7d）、球面展示模式（固定 / 最紧 / 轮播，见 §8.1）、穿透模式开关。
+- 外观：球大小、透明度、主题色、是否开机自启、内核默认窗口（5h / 7d）、上球 provider 多选（见 §8.1）、穿透模式开关。
 - menu bar：打开总面板、快速开关 provider、查看 ETA。
 
 ---
