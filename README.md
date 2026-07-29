@@ -1,46 +1,46 @@
 # Buoy 🛟
 
-> macOS 常驻桌面悬浮小球，一眼看尽多 provider 的 AI token / 额度消耗，烧得太快时预警。
+> A always-on macOS desktop floating ball that shows your AI token / quota spend across providers at a glance, and warns you when it's burning down too fast.
 
-把"打开 5 个 provider 官网查额度"压缩成"瞥一眼桌面小球"。Buoy = 浮标：浮在桌面上的球，液面随额度起伏，危险时闪红光--不是隐喻，是直译。
+Turns "open 5 provider dashboards to check quota" into "glance at a ball on your desktop." Buoy = buoy: a ball floating on your desktop whose liquid level rises and falls with your quota, flashing red when danger is near -- not a metaphor, a literal translation.
 
 ```
         ╭───╮
-        │ ◯ │   外环 = 月度剩余    核心液面 = 当前窗口剩余
-        ╰───╯   呼吸频率 ↔ 燃烧率（烧得越快呼吸越急）
+        │ ◯ │   outer ring = monthly remaining    core liquid = current window remaining
+        ╰───╯   breathing rate ↔ burn rate (the faster you burn, the faster it breathes)
 ```
 
 ---
 
-## 为什么
+## Why
 
-- **Glanceable**：一眼知消耗，不用切走当前工作、不用开浏览器。
-- **多 provider 统一视图**：火山（5h / 7d / 30d 三级滚动）、DeepSeek（纯余额）--同构呈现，单击开总面板纵览全部。
-- **预测优于报数**：基于燃烧率给出 ETA（"5h 额度按当前速度还剩 12 分钟"），直击"5 小时额度 10 分钟烧完才发现"的痛点。
-- **常驻低耗**：原生 SwiftUI + AppKit，常驻内存与 CPU 极小；不抢焦点。
+- **Glanceable**: see consumption at a glance, without switching away from your work or opening a browser.
+- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance) -- rendered homogeneously; click for a full dashboard across all providers.
+- **Prediction over reporting**: computes ETA from burn rate ("at the current pace, your 5h quota has 12 minutes left"), attacking the pain of "my 5-hour quota burned out in 10 minutes before I noticed."
+- **Low-overhead resident**: native SwiftUI + AppKit, tiny resident memory and CPU; never steals focus.
 
-## 现状
+## Status
 
-🚧 **Pre-release / 开发中**。M0 骨架 + M1 双适配器 + Phase 1 预测已就绪，可真机运行。
+🚧 **Pre-release / work in progress.** M0 skeleton + M1 dual adapters + Phase 1 prediction are done and runnable on real hardware.
 
-| 已完成 | 待完成 |
+| Done | TODO |
 |---|---|
-| 浮动球（外环 + 核心液面 + 呼吸/波形动画） | Keychain 凭证存储（当前 config.json） |
-| 总面板手风琴 + ETA + sparkline | 预警通知（AlertEngine + UserNotifications） |
-| DeepSeek + 火山 双 provider（真联调通过） | per-provider 轮询调度 + 持久化 |
-| 燃烧率 / ETA 接通球面呼吸与面板 | 设置 UI、菜单栏、开机自启 |
-| Volc Signature V4 签名 + 统一 Quota 模型 | MiMo / OpenAI / Anthropic、沙盒与签名 |
+| Floating ball (outer ring + core liquid + breathing/wave animation) | Keychain credential storage (currently config.json) |
+| Dashboard accordion + ETA + sparkline | Alert notifications (AlertEngine + UserNotifications) |
+| DeepSeek + Volcano providers (real-verified) | Settings UI, menu bar, launch-at-login |
+| Burn rate / ETA wired to ball breathing & dashboard | MiMo / OpenAI / Anthropic, sandbox & signing |
+| Volc Signature V4 signing + unified Quota model | (per-provider polling, backoff & persistence ✅) |
 
-完整路线图见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
+Full roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
-## 要求
+## Requirements
 
-- **macOS 14.0+**（Sonoma；用到 `PhaseAnimator` / `Canvas`）
-- Xcode Command Line Tools（Swift 6.0 工具链）
+- **macOS 14.0+** (Sonoma; uses `PhaseAnimator` / `Canvas`)
+- Xcode Command Line Tools (Swift 6.0 toolchain)
 
-## 快速开始
+## Quick Start
 
-### 1. 构建
+### 1. Build
 
 ```sh
 git clone https://github.com/kungf/buoy.git
@@ -48,82 +48,82 @@ cd buoy
 swift build
 ```
 
-### 2. 配置凭证
+### 2. Configure credentials
 
-凭证存于仓库**外**的 `~/.buoy/config.json`（chmod 600，已 gitignore，永不入库）：
+Credentials live **outside** the repo in `~/.buoy/config.json` (chmod 600, gitignored, never committed):
 
 ```json
 {
   "providers": {
-    "deepseek": { "token": "sk-你的-deepseek-api-key" },
-    "volcano":  { "ak": "你的-火山-AccessKey", "sk": "你的-火山-SecretKey" }
+    "deepseek": { "token": "sk-your-deepseek-api-key" },
+    "volcano":  { "ak": "your-volc-AccessKey", "sk": "your-volc-SecretKey" }
   }
 }
 ```
 
-> **火山注意**：需要的是 IAM **AccessKey + SecretKey**（控制台 -> 访问控制 IAM -> 密钥管理），不是 ARK 推理 API Key（`ark-` 开头的 key 走控制面 OpenAPI 会 401）。
+> **Volcano note**: you need IAM **AccessKey + SecretKey** (console -> Access Control IAM -> Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
 
-### 3. 联调验证（CLI）
+### 3. Verify with the CLI
 
 ```sh
-.build/debug/buoyctl all      # deepseek + volcano 各拉一次，打印额度
+.build/debug/buoyctl all      # fetches deepseek + volcano once, prints quotas
 ```
 
-凭证优先级：环境变量 > `~/.buoy/config.json`：
+Credential priority: env vars > `~/.buoy/config.json`:
 - `BUOY_DEEPSEEK_TOKEN`
 - `BUOY_VOLC_AK` / `BUOY_VOLC_SK`
 
-### 4. 打包运行
+### 4. Package & run
 
 ```sh
-./Scripts/make-app.sh         # 产出 build/Buoy.app（LSUIElement 后台 agent）
+./Scripts/make-app.sh         # produces build/Buoy.app (LSUIElement background agent)
 open build/Buoy.app
 ```
 
-球出现在主屏右上角。`BUOY_MOCK=critical|warning|exhausted|mixed|healthy open build/Buoy.app` 可用 mock 场景做视觉测试（不发网络请求）。退出：`pkill -x Buoy`。
+The ball appears at the top-right of the main screen. Use `BUOY_MOCK=critical|warning|exhausted|mixed|healthy open build/Buoy.app` for visual testing with mock scenarios (no network). Quit: `pkill -x Buoy`.
 
-## 交互
+## Interactions
 
-| 手势 | 动作 |
+| Gesture | Action |
 |---|---|
-| hover | 浮层摘要（provider + 各窗口百分比） |
-| 单击 | 打开总面板（所有 provider 一览） |
-| 滚轮 | 核心液面在 5h ↔ 7d 间切（外环月度不变） |
-| 拖动 | 移动球体，松手吸附屏幕边缘 |
-| 右键 | 菜单（刷新 / 暂停 / 设置 / 隐藏） |
+| hover | floating summary (provider + per-window percentages) |
+| click | open dashboard (all providers at a glance) |
+| scroll | cycle core liquid between 5h ↔ 7d (outer monthly ring unchanged) |
+| drag | move the ball; snaps to nearest screen edge on release |
+| right-click | menu (refresh / pause / settings / hide) |
 
-## 架构
+## Architecture
 
-Adapter-first：provider 差异全部收敛在适配层；上层 UI / 调度 / 预测只认统一 `Quota` 模型。
+Adapter-first: all provider differences are contained in the adapter layer; the upper UI / scheduling / prediction only knows the unified `Quota` model.
 
 ```
-UI 层        FloatingBall (NSPanel) · Dashboard (手风琴) · [设置 WIP]
-              │ 订阅 @Published
-应用服务层    UsageStore (ObservableObject) · ForecastEngine (燃烧率/ETA)
-              │ 调度                          │ 凭证
-适配层        Provider 协议 · Volcano(V4) · DeepSeek(bearer) · [MiMo/OpenAI/Anthropic WIP]
+UI           FloatingBall (NSPanel) · Dashboard (accordion) · [Settings WIP]
+              │ subscribes @Published
+Service      UsageStore (ObservableObject) · ForecastEngine (burn rate/ETA)
+              │ scheduling                    │ credentials
+Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · [MiMo/OpenAI/Anthropic WIP]
               │
-Core         Quota 模型 · VolcSigner · HTTPClient · CredentialStore
+Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
 
-SPM 四 target：
-- **BuoyCore**（Foundation-only，零 AppKit/SwiftUI）--模型 / 鉴权 / 预测 / 适配器 / 网络
-- **BuoyApp**--浮球 + 总面板 UI
-- **buoyctl**--适配器联调 CLI
-- **BuoyCoreTests**--单测（27/27）
+Four SPM targets:
+- **BuoyCore** (Foundation-only, zero AppKit/SwiftUI) -- model / auth / forecast / providers / networking
+- **BuoyApp** -- floating ball + dashboard UI
+- **buoyctl** -- adapter integration CLI
+- **BuoyCoreTests** -- unit tests (33/33)
 
-## 安全
+## Security
 
-- API key 仅存 `~/.buoy/config.json`（chmod 600，仓库外）；**永不落盘明文进仓库、永不进日志、永不上传第三方**（M2 将迁至 Keychain）。
-- `Credential` 实现 redacting `CustomStringConvertible`，任何 `print()` 只露前 4 字符。
-- 网络仅 HTTPS 直连（ATS + 证书校验）。
+- API keys live only in `~/.buoy/config.json` (chmod 600, outside the repo); **never committed, never logged, never sent to third parties** (M2 will migrate to Keychain).
+- `Credential` implements a redacting `CustomStringConvertible` -- any `print()` shows only the first 4 characters.
+- Network is HTTPS-only (ATS + certificate validation).
 
-## 文档
+## Documentation
 
-- [`docs/DESIGN.md`](docs/DESIGN.md)--完整设计文档（理念 / 架构 / provider 规格 / UI / 里程碑）
-- [`docs/ROADMAP.md`](docs/ROADMAP.md)--后续路线图与缺口清单
-- [`docs/M0-ACCEPTANCE.md`](docs/M0-ACCEPTANCE.md)--M0 验收报告
+- [`docs/DESIGN.md`](docs/DESIGN.md) -- full design doc (philosophy / architecture / provider specs / UI / milestones) -- in Chinese
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) -- roadmap and gap checklist -- in Chinese
+- [`docs/M0-ACCEPTANCE.md`](docs/M0-ACCEPTANCE.md) -- M0 acceptance report -- in Chinese
 
 ## License
 
-未定（pre-release）。
+TBD (pre-release).
