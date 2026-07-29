@@ -1,13 +1,16 @@
 import SwiftUI
 import BuoyCore
 
-/// 总面板：手风琴布局（DESIGN.md §8.2）。顶部 = 刷新 + 球上展示 provider 切换。
+/// 总面板：手风琴布局（DESIGN.md §8.2）。顶部 = 刷新 / 展示模式 / pin；预警条条件出现。
 struct DashboardView: View {
     @ObservedObject var store: UsageStore
+    var onTogglePin: (Bool) -> Void = { _ in }
+
     @State private var expanded: Set<String> = []
+    @State private var isPinned = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Buoy 总面板").font(.headline)
                 Spacer()
@@ -21,13 +24,30 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("立即刷新")
-                Picker("球上展示", selection: $store.displayProviderId) {
-                    ForEach(store.reports, id: \.providerId) { report in
-                        Text(report.providerId).tag(report.providerId)
+                Picker("展示", selection: $store.displayMode) {
+                    ForEach(DisplayMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
                     }
                 }
                 .labelsHidden()
-                .frame(width: 130)
+                .frame(width: 90)
+                .help("球面展示模式")
+                Button {
+                    isPinned.toggle()
+                    onTogglePin(isPinned)
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                }
+                .buttonStyle(.borderless)
+                .help(isPinned ? "取消常驻" : "常驻置顶")
+            }
+
+            // 预警条（DESIGN.md §8.2）：非展示 provider 告急时出现，点击切到该 provider
+            if !store.alertBadges.isEmpty {
+                AlertBar(store: store) { id in
+                    store.pinDisplay(to: id)
+                    expanded.insert(id)
+                }
             }
 
             ScrollView {
@@ -73,6 +93,52 @@ struct DashboardView: View {
             } else {
                 expanded.insert(id)
             }
+        }
+    }
+}
+
+/// 预警条（DESIGN.md §8.2）：堆叠的活跃告警，底色随严重度。
+private struct AlertBar: View {
+    @ObservedObject var store: UsageStore
+    let onTap: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(store.alertBadges) { badge in
+                Button { onTap(badge.id) } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(severityColor(badge.severity)).frame(width: 8, height: 8)
+                        Text("\(badge.id) \(severityText(badge.severity))")
+                            .font(.caption.weight(.medium))
+                        Spacer()
+                        Text("切到该 provider ▸").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(severityColor(badge.severity).opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func severityColor(_ s: BadgeSeverity) -> Color {
+        switch s {
+        case .fastBurn: return .yellow
+        case .nearDepleted: return .orange
+        case .depleted: return .red
+        case .error: return .gray
+        }
+    }
+
+    private func severityText(_ s: BadgeSeverity) -> String {
+        switch s {
+        case .fastBurn: return "消耗过快"
+        case .nearDepleted: return "即将耗尽"
+        case .depleted: return "已耗尽"
+        case .error: return "拉取异常"
         }
     }
 }
@@ -162,8 +228,9 @@ private struct ProviderSection: View {
     }
 }
 
-/// 单条 quota：label + 进度条 + 用量文本 + reset 时刻。
-private struct QuotaRow: View {
+/// 单条 quota：label + 进度条 + 用量文本 + reset 时刻（DESIGN.md §8.5 详情/sparkline）。
+/// internal 供 ProviderDetailView 复用。
+struct QuotaRow: View {
     let quota: Quota
     let eta: TimeInterval?
     let samples: [UsageSample]
