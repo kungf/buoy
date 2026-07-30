@@ -5,7 +5,9 @@ import BuoyCore
 /// Outer ring = longest window used (30d ambient); middle ring = 7d used; core liquid = active
 /// window used / balance ETA health. Each channel is colored by its OWN remaining health
 /// (green -> orange -> red), never by `state`. State drives animation only:
-/// breathing / shake / slow-blink / dashed pulse / heat particles.
+/// breathing / slow-blink / dashed pulse / heat particles. (The near-depleted shake was removed
+/// because it triggered on merely-low windows like 7d @ 85% used and read as jitter, not signal —
+/// color already communicates urgency.)
 struct BallView: View {
     let model: BallModel
     /// Which provider this ball represents; drives the bottom nameplate short code.
@@ -30,10 +32,9 @@ struct BallView: View {
                 }
             }
             .scaleEffect(breathe)
-            .offset(shakeOffset(time))
             .opacity(displayOpacity(time))
             // Ball content is sized to `ballSize`; the outer canvas frame (`canvasSize`) centers
-            // it and leaves margin so the ring stroke / breathing / shake are not clipped by the
+            // it and leaves margin so the ring stroke / breathing are not clipped by the
             // square panel (fixes "ball looks cropped on all sides").
             .frame(width: Theme.ballSize, height: Theme.ballSize)
         }
@@ -176,12 +177,6 @@ struct BallView: View {
     }
 
     // MARK: - State-driven animation modifiers (DESIGN.md §8.4)
-
-    /// near-depleted: slight shake
-    private func shakeOffset(_ time: Double) -> CGSize {
-        guard model.state == .nearDepleted else { return .zero }
-        return CGSize(width: 1.5 * sin(time * 18), height: 1.2 * sin(time * 13))
-    }
 
     /// depleted: slow blink; stale: dimmed; otherwise fully opaque
     private func displayOpacity(_ time: Double) -> Double {

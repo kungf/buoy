@@ -113,7 +113,16 @@ final class BallWindowController {
             rootView: HoverSummaryView(store: store, providerId: providerId))
         hoverPopover = popover
         guard popover.isShown == false else { return }
-        popover.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minX)
+        // Anchor the popover on the ball itself (not the whole canvas): the
+        // canvas has a `canvasMargin` on every side that would otherwise push
+        // the popover ~8pt away from the visible ball edge.
+        // NSHostingView is unflipped by default (bottom-left origin) and the
+        // ball is centered symmetrically, so `(canvasMargin, canvasMargin)` is
+        // the correct anchor regardless of top-vs-bottom origin. If the canvas
+        // ever becomes asymmetric or the hosting view is flipped, recompute.
+        let ballRect = NSRect(x: Theme.canvasMargin, y: Theme.canvasMargin,
+                              width: Theme.ballSize, height: Theme.ballSize)
+        popover.show(relativeTo: ballRect, of: contentView, preferredEdge: .minX)
     }
 
     private func hidePopover() {

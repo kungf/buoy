@@ -263,13 +263,16 @@ final class UsageStore: ObservableObject {
     }
 
     /// Provider-level health (uses real ETA, fixing balance type always-nil, DESIGN.md §7).
+    /// `now`-aware so a windowed quota whose `resetsAt` has passed is treated as fully
+    /// healthy (mirrors `Quota.percentUsedAt(now:)` — keeps state consistent with the
+    /// liquid level when the Mac slept through a window reset).
     func healthScore(for report: ProviderReport) -> Double? {
         let interval = pollInterval(forProvider: report.providerId)
         let etas: [String: TimeInterval?] = Dictionary(
             report.quotas.map { ($0.id, forecast.eta(for: $0, pollInterval: interval)) },
             uniquingKeysWith: { first, _ in first }
         )
-        return HealthScore.providerScore(quotas: report.quotas, etas: etas)
+        return HealthScore.providerScore(quotas: report.quotas, etas: etas, now: Date())
     }
 
     func isStale(for providerId: String) -> Bool {
@@ -389,10 +392,13 @@ final class UsageStore: ObservableObject {
         let ringQ = ringQuota(for: providerId)
         let midQ = midRingQuota(for: providerId)
         let coreQ = coreQuota(for: providerId)
-        let ringUsed = ringQ?.percentUsed
-        let midUsed = midQ?.percentUsed
-        // Unified "used" semantics: liquid level = active window used % (rises as consumed).
-        let coreLevel = coreQ?.percentUsed
+        // Use `percentUsedAt(now:)` so a window whose `resetsAt` has already
+        // passed reads as 0% even if the cached `used` value is stale
+        // (e.g. the Mac slept through the reset and polling paused).
+        let now = Date()
+        let ringUsed = ringQ?.percentUsedAt(now: now)
+        let midUsed = midQ?.percentUsedAt(now: now)
+        let coreLevel = coreQ?.percentUsedAt(now: now)
         let isError = state == .error
         let center: String
         if isError { center = "!" }
@@ -400,10 +406,12 @@ final class UsageStore: ObservableObject {
         else { center = "--" }
         let sub = isError ? "error" : shortLabel(coreQ?.id ?? "")
         // Each channel colored by its own remaining health (DESIGN §8.3 independent coloring);
-        // core no longer uses state, fixing "5h at 7% turns yellow".
-        let ringHealth = ringQ.flatMap { HealthScore.score(quota: $0, etaSeconds: eta(for: $0)) }
-        let midHealth = midQ.flatMap { HealthScore.score(quota: $0, etaSeconds: eta(for: $0)) }
-        let coreHealth = coreQ.flatMap { HealthScore.score(quota: $0, etaSeconds: eta(for: $0)) }
+        // core no longer uses state, fixing "5h at 7% turns yellow". `now`-aware so a window
+        // whose `resetsAt` has already passed reports full health (green) instead of red-from-
+        // stale-used — keeps color aligned with `coreLevel` after Mac sleep-through.
+        let ringHealth = ringQ.flatMap { HealthScore.score(quota: $0, etaSeconds: eta(for: $0), now: now) }
+        let midHealth = midQ.flatMap { HealthScore.score(quota: $0, etaSeconds: eta(for: $0), now: now) }
+        let coreHealth = coreQ.flatMap { HealthScore.score(quota: $0, etaSeconds: eta(for: $0), now: now) }
         return BallModel(mode: isError ? .error : .windowed,
                          ringUsed: ringUsed, midRingUsed: midUsed, coreLevel: coreLevel,
                          ringHealth: ringHealth, midRingHealth: midHealth, coreHealth: coreHealth,

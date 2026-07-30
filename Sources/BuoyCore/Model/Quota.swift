@@ -82,4 +82,16 @@ public extension Quota {
         if let used, let limit { return max(limit - used, 0) }
         return nil
     }
+
+    /// Used% at the given time. For a `timeWindowed` quota whose window has
+    /// already reset (`now >= resetsAt`), returns 0 regardless of the cached
+    /// `used` value — so the UI shows the new empty window immediately even
+    /// when polling is paused (e.g. the Mac slept through the reset).
+    /// Falls through to `percentUsed` otherwise.
+    func percentUsedAt(now: Date) -> Double? {
+        if type == .timeWindowed, let resetsAt, now >= resetsAt {
+            return 0
+        }
+        return percentUsed
+    }
 }
