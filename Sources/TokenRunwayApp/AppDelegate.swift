@@ -71,15 +71,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildStatusMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(makeItem("打开总面板", action: #selector(openDashboardAction)))
-        let ballTitle = (ballController?.isBallHidden == true) ? "显示球" : "隐藏球"
+        menu.addItem(makeItem("Dashboard", action: #selector(openDashboardAction)))
+        let ballTitle = (ballController?.isBallHidden == true) ? "Show ball" : "Hide ball"
         menu.addItem(makeItem(ballTitle, action: #selector(toggleBallAction)))
-        let through = makeItem(store.clickThrough ? "退出穿透模式" : "穿透模式",
+        let through = makeItem(store.clickThrough ? "Disable click-through" : "Click-through",
                                action: #selector(toggleClickThroughAction))
         through.state = store.clickThrough ? .on : .off
         menu.addItem(through)
         menu.addItem(.separator())
-        menu.addItem(makeItem("退出 TokenRunway", action: #selector(quitAction)))
+        menu.addItem(makeItem("Quit TokenRunway", action: #selector(quitAction)))
         return menu
     }
 

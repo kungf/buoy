@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import TokenRunwayCore
 
-/// 单 provider 详情面板（双击球打开，DESIGN.md §8.5 双击=当前 provider 详情）。
+/// Single-provider detail panel (double-click ball, DESIGN.md §8.5).
 @MainActor
 final class ProviderDetailWindowController {
     private let panel: NSPanel
@@ -11,7 +11,7 @@ final class ProviderDetailWindowController {
         let hosting = NSHostingController(
             rootView: ProviderDetailView(store: store, providerId: providerId))
         let panel = NSPanel(contentViewController: hosting)
-        panel.title = "\(providerId) 详情"
+        panel.title = providerId
         panel.styleMask = [.titled, .closable, .resizable, .nonactivatingPanel]
         panel.isReleasedWhenClosed = false
         panel.level = .floating
@@ -35,17 +35,19 @@ private struct ProviderDetailView: View {
                 HStack(spacing: 8) {
                     Image(systemName: ProviderTheme.theme(for: providerId).icon)
                         .foregroundStyle(ProviderTheme.theme(for: providerId).color)
-                    Text(report.providerId).font(.headline)
+                    Text(store.providerDisplayName(for: providerId))
+                        .font(.headline)
                     Spacer()
-                    Text("更新于 \(report.fetchedAt, style: .relative)")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                    Text("Updated \(report.fetchedAt, style: .relative) ago")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
                 Divider()
                 ForEach(report.quotas) { quota in
                     QuotaRow(quota: quota, eta: store.eta(for: quota), samples: store.samples(for: quota.id))
                 }
                 if let balance = report.balance {
-                    Text("余额 \(formatAmount(balance.total)) \(balance.currency)（赠送 \(formatAmount(balance.granted)) / 充值 \(formatAmount(balance.toppedUp))）")
+                    Text("Balance \(formatAmount(balance.total)) \(balance.currency) (granted \(formatAmount(balance.granted)) / topped-up \(formatAmount(balance.toppedUp)))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let error = store.providerErrors[providerId] {
@@ -56,7 +58,7 @@ private struct ProviderDetailView: View {
             .frame(width: 320)
         } else {
             VStack(spacing: 6) {
-                Text("暂无 \(providerId) 数据").foregroundStyle(.secondary)
+                Text("No data for \(providerId)").foregroundStyle(.secondary)
                 if let error = store.providerErrors[providerId] {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }

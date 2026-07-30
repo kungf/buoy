@@ -1,7 +1,7 @@
 import SwiftUI
 import TokenRunwayCore
 
-/// Dashboard: accordion layout (DESIGN.md §8.2). Top = refresh / pin; alert bar appears conditionally.
+/// Dashboard: accordion layout (DESIGN.md §8.2).
 struct DashboardView: View {
     @ObservedObject var store: UsageStore
     var onTogglePin: (Bool) -> Void = { _ in }
@@ -11,8 +11,8 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Toolbar — no redundant title, just actions
             HStack {
-                Text("TokenRunway 总面板").font(.headline)
                 Spacer()
                 if store.isRefreshing {
                     ProgressView().controlSize(.small)
@@ -23,7 +23,7 @@ struct DashboardView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
-                .help("立即刷新")
+                .help("Refresh")
                 Button {
                     isPinned.toggle()
                     onTogglePin(isPinned)
@@ -31,7 +31,7 @@ struct DashboardView: View {
                     Image(systemName: isPinned ? "pin.fill" : "pin")
                 }
                 .buttonStyle(.borderless)
-                .help(isPinned ? "取消常驻" : "常驻置顶")
+                .help(isPinned ? "Unpin" : "Pin")
             }
 
             // Alert bar (DESIGN.md §8.2): appears when a non-displayed provider is alerting; tap adds it.
@@ -69,7 +69,7 @@ struct DashboardView: View {
                                     .foregroundStyle(store.isSelected(id) ? Color.accentColor : Color.secondary)
                             }
                             .buttonStyle(.borderless)
-                            .help(store.isSelected(id) ? "球面显示中，点击移除" : "加入球面")
+                            .help(store.isSelected(id) ? "On ball — click to remove" : "Add to ball")
                             Text(store.providerErrors[id] ?? "")
                                 .font(.caption)
                                 .foregroundStyle(.red)
@@ -112,7 +112,7 @@ private struct AlertBar: View {
                         Text("\(badge.id) \(severityText(badge.severity))")
                             .font(.caption.weight(.medium))
                         Spacer()
-                        Text("切到该 provider ▸").font(.caption2).foregroundStyle(.secondary)
+                        Text("Switch ▸").font(.caption2).foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -136,10 +136,10 @@ private struct AlertBar: View {
 
     private func severityText(_ s: BadgeSeverity) -> String {
         switch s {
-        case .fastBurn: return "消耗过快"
-        case .nearDepleted: return "即将耗尽"
-        case .depleted: return "已耗尽"
-        case .error: return "拉取异常"
+        case .fastBurn: return "burning fast"
+        case .nearDepleted: return "near depleted"
+        case .depleted: return "depleted"
+        case .error: return "fetch error"
         }
     }
 }
@@ -163,7 +163,8 @@ private struct ProviderSection: View {
                     Circle()
                         .fill(Theme.healthColor(store.healthScore(for: report)))
                         .frame(width: 8, height: 8)
-                    Text(report.providerId).font(.subheadline.weight(.medium))
+                    Text(store.providerDisplayName(for: report.providerId))
+                        .font(.subheadline.weight(.medium))
                     Spacer()
                     Text(primaryMetric)
                         .font(.caption.monospacedDigit())
@@ -176,7 +177,7 @@ private struct ProviderSection: View {
                             .foregroundStyle(store.isSelected(report.providerId) ? Color.accentColor : Color.secondary)
                     }
                     .buttonStyle(.borderless)
-                    .help(store.isSelected(report.providerId) ? "球面显示中，点击移除" : "加入球面")
+                    .help(store.isSelected(report.providerId) ? "On ball — click to remove" : "Add to ball")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -196,7 +197,7 @@ private struct ProviderSection: View {
                     }
                     if let balance = report.balance {
                         HStack {
-                            Text("余额（赠送 \(formatAmount(balance.granted)) / 充值 \(formatAmount(balance.toppedUp))）")
+                            Text("Balance (granted \(formatAmount(balance.granted)) / topped-up \(formatAmount(balance.toppedUp)))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -205,7 +206,7 @@ private struct ProviderSection: View {
                         }
                     }
                     HStack {
-                        Text("更新于 \(report.fetchedAt, style: .relative)")
+                        Text("Updated \(report.fetchedAt, style: .relative) ago")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                         Spacer()
@@ -239,7 +240,7 @@ private struct ProviderSection: View {
     }
 }
 
-/// A single quota row: label + progress bar + usage text + reset time (DESIGN.md §8.5 detail/sparkline).
+/// Quota row: label + progress bar + usage text + reset time (DESIGN.md §8.5 detail/sparkline).
 /// internal so ProviderDetailView can reuse it.
 struct QuotaRow: View {
     let quota: Quota
@@ -279,7 +280,7 @@ struct QuotaRow: View {
         let used = quota.used.map { formatNumber($0) } ?? "--"
         let limit = quota.limit.map { formatNumber($0) } ?? "--"
         if quota.type == .balance {
-            return "剩 \(quota.effectiveRemaining.map { formatNumber($0) } ?? "--")"
+            return "\(quota.effectiveRemaining.map { formatNumber($0) } ?? "--") left"
         }
         return "\(used) / \(limit)"
     }

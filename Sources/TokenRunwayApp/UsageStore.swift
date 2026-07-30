@@ -100,7 +100,7 @@ final class UsageStore: ObservableObject {
     private func fetchOne(_ id: String) async {
         guard let provider = providers[id] else { return }
         guard let credential = CredentialStore.credential(for: id, from: CredentialStore.load()) else {
-            providerErrors[id] = "未配置凭证"
+            providerErrors[id] = "Not configured"
             return
         }
         do {
@@ -130,11 +130,11 @@ final class UsageStore: ObservableObject {
     private static func describe(_ error: Error) -> String {
         guard let providerError = error as? ProviderError else { return error.localizedDescription }
         switch providerError {
-        case .missingCredential: return "缺少凭证"
-        case .unauthorized: return "鉴权失败（检查 key）"
-        case .rateLimited: return "被限流，稍后自动重试"
-        case .network(let msg): return "网络错误：\(msg)"
-        case .parse(let msg): return "解析错误：\(msg)"
+        case .missingCredential: return "Missing credential"
+        case .unauthorized: return "Auth failed (check key)"
+        case .rateLimited: return "Rate limited, will retry"
+        case .network(let msg): return "Network error: \(msg)"
+        case .parse(let msg): return "Parse error: \(msg)"
         case .unknown(let code): return "HTTP \(code)"
         }
     }

@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// 小型走势线（DESIGN.md §8.2 sparkline）。
-/// 输入为采样序列的 `used` 代理量（windowed=used，balance=-remaining，均"消耗时递增"），
-/// 故曲线上升 = 持续消耗。空/单点时不绘制；caller 设定 frame（如 60×16）。
+/// Mini sparkline (DESIGN.md §8.2). Plots `used` samples — rising curve = sustained consumption.
+/// Renders nothing for <2 points; caller sets the frame (e.g. 60×16).
 struct Sparkline: View {
     let values: [Double]
     var color: Color = .secondary
@@ -28,12 +27,12 @@ struct Sparkline: View {
     }
 }
 
-/// ETA 文本格式化（DESIGN.md §7 ETA 展示）。
-/// nil / 冷启动 -> "--"；<1min -> "<1m"；<1h -> "≈Nm"；<1d -> "≈N.Nh"；否则 "≈N.N天"。
+/// ETA formatting (DESIGN.md §7). nil/cold-start -> "--"; <1m -> "<1m";
+/// <1h -> "≈Nm"; <1d -> "≈N.Nh"; else "≈N.Nd".
 func formatETA(_ eta: TimeInterval?) -> String {
     guard let eta, eta > 0 else { return "--" }
     if eta < 60 { return "<1m" }
     if eta < 3600 { return "≈\(Int(eta / 60))m" }
     if eta < 86_400 { return "≈\(String(format: "%.1f", eta / 3600))h" }
-    return "≈\(String(format: "%.1f", eta / 86_400))天"
+    return "≈\(String(format: "%.1f", eta / 86_400))d"
 }
