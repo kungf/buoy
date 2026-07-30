@@ -2,37 +2,37 @@
 import PackageDescription
 
 let package = Package(
-    name: "Buoy",
+    name: "TokenRunway",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "BuoyCore", targets: ["BuoyCore"]),
-        .executable(name: "BuoyApp", targets: ["BuoyApp"]),
-        .executable(name: "buoyctl", targets: ["BuoyCtl"]),
+        .library(name: "TokenRunwayCore", targets: ["TokenRunwayCore"]),
+        .executable(name: "TokenRunwayApp", targets: ["TokenRunwayApp"]),
+        .executable(name: "trwyctl", targets: ["TokenRunwayCtl"]),
     ],
     targets: [
         .target(
-            name: "BuoyCore",
-            path: "Sources/BuoyCore"
+            name: "TokenRunwayCore",
+            path: "Sources/TokenRunwayCore"
         ),
         .executableTarget(
-            name: "BuoyApp",
-            dependencies: ["BuoyCore"],
-            path: "Sources/BuoyApp"
+            name: "TokenRunwayApp",
+            dependencies: ["TokenRunwayCore"],
+            path: "Sources/TokenRunwayApp"
         ),
         .executableTarget(
-            name: "BuoyCtl",
-            dependencies: ["BuoyCore"],
-            path: "Sources/BuoyCtl"
+            name: "TokenRunwayCtl",
+            dependencies: ["TokenRunwayCore"],
+            path: "Sources/TokenRunwayCtl"
         ),
         .testTarget(
-            name: "BuoyCoreTests",
-            dependencies: ["BuoyCore"],
-            path: "Tests/BuoyCoreTests"
+            name: "TokenRunwayCoreTests",
+            dependencies: ["TokenRunwayCore"],
+            path: "Tests/TokenRunwayCoreTests"
         ),
         .testTarget(
-            name: "BuoyAppTests",
-            dependencies: ["BuoyApp"],
-            path: "Tests/BuoyAppTests"
+            name: "TokenRunwayAppTests",
+            dependencies: ["TokenRunwayApp"],
+            path: "Tests/TokenRunwayAppTests"
         ),
     ]
 )

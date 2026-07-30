@@ -1,7 +1,7 @@
-# Buoy（浮标）- 设计文档
+# TokenRunway（原 Buoy）- 设计文档
 
 > macOS 常驻桌面悬浮小球，一眼呈现多 provider 的 API token / 额度消耗，并在额度被快速烧掉时预警。
-> 技术栈：SwiftUI + AppKit（原生）。Buoy = 浮标：浮在桌面上的球，液面随额度起伏，危险时闪红光——不是隐喻，是直译。
+> 技术栈：SwiftUI + AppKit（原生）。TokenRunway = token 剩余跑道；早年代号 Buoy（浮标）：浮在桌面上的球，液面随额度起伏，危险时闪红光——不是隐喻，是直译。
 
 ---
 
@@ -24,15 +24,15 @@ AI 额度监控赛道已拥挤，但形态趋同——**全是菜单栏 / CLI / 
 |---|---|---|---|
 | Claude-Code-Usage-Monitor（8.5k⭐） | Python CLI | 仅 Claude | 已有燃烧率预测，"预测"非独有卖点 |
 | ClaudeBar（1.4k⭐） | Swift 菜单栏 | Claude/Codex/Gemini | 多助手 |
-| TokenEater（442⭐） | 原生 macOS overlay | 仅 Claude | 形态最接近 Buoy |
+| TokenEater（442⭐） | 原生 macOS overlay | 仅 Claude | 形态最接近 TokenRunway |
 | ClaudeMeter（125⭐） | Swift 菜单栏 | Claude 5h 会话 + 7d 周额度 | 窗口概念与火山 AFP 同构 |
 
-**Buoy 差异化**：① 悬浮球形态独占（液面 + 呼吸节奏）；② 中国 provider 真空（火山 ARK / DeepSeek / MiMo 无人覆盖）；③ 统一 Quota 模型 + adapter-first（现有工具均为单 provider 硬编码解析）。
+**TokenRunway 差异化**：① 悬浮球形态独占（液面 + 呼吸节奏）；② 中国 provider 真空（火山 ARK / DeepSeek / MiMo 无人覆盖）；③ 统一 Quota 模型 + adapter-first（现有工具均为单 provider 硬编码解析）。
 **撞名检查**：App Store 无精确同名；GitHub 有 Buoy-gg（React Native 调试工具，Electron），受众不重叠，发布时靠 icon / 域名区分。
 
 ### 0.4 非目标（MVP 阶段）
 - 不做请求级实时监控（不拦截 / 代理 API 调用），仅靠 provider 官方用量 / 计费 API 周期性拉取。
-- 不做跨平台（仅 macOS；决策于 2026-07：Windows 托盘赛道已有竞品，Buoy 的空位是 macOS 原生 + 中国 provider。逃生通道：`Core/` 层只依赖 Foundation、零 AppKit/SwiftUI import，将来若做 Windows——首选 Tauri——只需重写 UI 与平台能力层，Core 逻辑照本设计移植）。
+- 不做跨平台（仅 macOS；决策于 2026-07：Windows 托盘赛道已有竞品，TokenRunway 的空位是 macOS 原生 + 中国 provider。逃生通道：`Core/` 层只依赖 Foundation、零 AppKit/SwiftUI import，将来若做 Windows——首选 Tauri——只需重写 UI 与平台能力层，Core 逻辑照本设计移植）。
 - 不做团队 / 多账号管理（单机单用户）。
 - 不做 provider 网关或聚合服务（纯本地客户端直连）。
 
@@ -333,7 +333,7 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
 **窗口形态**：默认是附着在球上的瞬态 `NSPopover`（点外自动关闭，扫一眼就走）；右上角 pin 按钮可撕下成独立浮窗（`NSPanel`）常驻盯盘。宽度 ~340pt，高度随内容自适应（上限 ~70% 屏高，超出滚动）。
 
 ```
-┌─ Buoy ──────────────────── ⟳ ⚙ ┐
+┌─ TokenRunway ────────────── ⟳ ⚙ ┐
 │ 🔥 火山 5h 消耗过快 (2.3× 常态) │ ← 预警条：仅在有活跃预警时出现
 ├────────────────────────────────┤
 │ 🌋 火山引擎     5h 73%  ⏱12m ▾ │ ← 展开中的 provider 卡
@@ -438,11 +438,11 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
 
 ## 11. 项目结构
 
-> Bundle ID：`com.wyang.buoy`　｜　App 显示名：**Buoy**　｜　副标题：*AI token & quota monitor*
+> Bundle ID：`com.wyang.tokenrunway`　｜　App 显示名：**TokenRunway**　｜　副标题：*AI token & quota monitor*
 
 ```
-Buoy/
-├── App/                  BuoyApp, AppDelegate, MenuBar
+TokenRunway/
+├── App/                  TokenRunwayApp, AppDelegate, MenuBar
 ├── UI/
 │   ├── FloatingBall/     BallView, LiquidCanvas, ParticleLayer
 │   ├── Detail/           DetailPanel, BurnRateChart

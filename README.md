@@ -1,8 +1,10 @@
-# Buoy 🛟
+# TokenRunway 🛬
 
-> A always-on macOS desktop floating ball that shows your AI token / quota spend across providers at a glance, and warns you when it's burning down too fast.
+> An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across providers, before you hit empty.
 
-Turns "open 5 provider dashboards to check quota" into "glance at a ball on your desktop." Buoy = buoy: a ball floating on your desktop whose liquid level rises and falls with your quota, flashing red when danger is near -- not a metaphor, a literal translation.
+"Runway" is the startup word for "how long can you keep burning at this rate before you're out." **TokenRunway** puts that number on your desktop as a floating ball: outer ring = monthly remaining, core liquid = current-window remaining, breathing rate = burn rate. When the ball starts breathing hard and flashing red, your 5-hour quota is 10 minutes away from empty. You knew before it happened.
+
+> Formerly known as `Buoy` — same product, sharper name.
 
 ```
         ╭───╮
@@ -43,14 +45,14 @@ Full roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 ### 1. Build
 
 ```sh
-git clone https://github.com/kungf/buoy.git
-cd buoy
+git clone https://github.com/kungf/token-runway.git
+cd token-runway
 swift build
 ```
 
 ### 2. Configure credentials
 
-Credentials live **outside** the repo in `~/.buoy/config.json` (chmod 600, gitignored, never committed):
+Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitignored, never committed):
 
 ```json
 {
@@ -66,21 +68,33 @@ Credentials live **outside** the repo in `~/.buoy/config.json` (chmod 600, gitig
 ### 3. Verify with the CLI
 
 ```sh
-.build/debug/buoyctl all      # fetches deepseek + volcano once, prints quotas
+.build/debug/trwyctl all      # fetches deepseek + volcano once, prints quotas
 ```
 
-Credential priority: env vars > `~/.buoy/config.json`:
-- `BUOY_DEEPSEEK_TOKEN`
-- `BUOY_VOLC_AK` / `BUOY_VOLC_SK`
+Credential priority: env vars > `~/.trwy/config.json`:
+- `TRWY_DEEPSEEK_TOKEN`
+- `TRWY_VOLC_AK` / `TRWY_VOLC_SK`
 
 ### 4. Package & run
 
 ```sh
-./Scripts/make-app.sh         # produces build/Buoy.app (LSUIElement background agent)
-open build/Buoy.app
+./Scripts/make-app.sh         # produces build/TokenRunway.app (LSUIElement background agent)
+open build/TokenRunway.app
 ```
 
-The ball appears at the top-right of the main screen. Use `BUOY_MOCK=critical|warning|exhausted|mixed|healthy open build/Buoy.app` for visual testing with mock scenarios (no network). Quit: `pkill -x Buoy`.
+The ball appears at the top-right of the main screen. Use `TRWY_MOCK=critical|warning|exhausted|mixed|healthy open build/TokenRunway.app` for visual testing with mock scenarios (no network). Quit: `pkill -x TokenRunway`.
+
+### Migrating from Buoy
+
+If you had the older `Buoy.app` installed, migration is one command:
+
+```sh
+mv ~/.buoy ~/.trwy 2>/dev/null || true       # config + cache
+pkill -x Buoy 2>/dev/null; rm -rf /Applications/Buoy.app build/Buoy.app 2>/dev/null || true
+# rename env vars in your shell rc: BUOY_* → TRWY_*
+```
+
+UserDefaults keys also moved (`buoy.selectedProviderIds` → `tokenrunway.selectedProviderIds`, same for `.ballPositions`); previous ball positions and provider selection will reset once.
 
 ## Interactions
 
@@ -107,14 +121,14 @@ Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
 
 Four SPM targets:
-- **BuoyCore** (Foundation-only, zero AppKit/SwiftUI) -- model / auth / forecast / providers / networking
-- **BuoyApp** -- floating ball + dashboard UI
-- **buoyctl** -- adapter integration CLI
-- **BuoyCoreTests** -- unit tests (33/33)
+- **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) -- model / auth / forecast / providers / networking
+- **TokenRunwayApp** -- floating ball + dashboard UI
+- **trwyctl** -- adapter integration CLI
+- **TokenRunwayCoreTests** -- unit tests (33/33)
 
 ## Security
 
-- API keys live only in `~/.buoy/config.json` (chmod 600, outside the repo); **never committed, never logged, never sent to third parties** (M2 will migrate to Keychain).
+- API keys live only in `~/.trwy/config.json` (chmod 600, outside the repo); **never committed, never logged, never sent to third parties** (M2 will migrate to Keychain).
 - `Credential` implements a redacting `CustomStringConvertible` -- any `print()` shows only the first 4 characters.
 - Network is HTTPS-only (ATS + certificate validation).
 
