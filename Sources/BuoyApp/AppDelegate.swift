@@ -21,9 +21,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(appBecameActive),
             name: NSApplication.didBecomeActiveNotification, object: nil)
+        // Also refresh when the Mac wakes from sleep. Swift Tasks are frozen
+        // during long sleeps, so even after they resume they may have missed a
+        // window reset — refetch immediately instead of showing yesterday's data.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification, object: nil)
     }
 
     @objc private func appBecameActive() {
+        Task { await store.refresh() }
+    }
+
+    @objc private func systemDidWake() {
         Task { await store.refresh() }
     }
 
