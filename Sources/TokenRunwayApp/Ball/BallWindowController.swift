@@ -26,6 +26,8 @@ final class BallWindowController {
     private let onPositionChange: (String, NSPoint) -> Void
     private let panel: NSPanel
     private var hoverPopover: NSPopover?
+    private var hoverFrameObserver: NSKeyValueObservation?
+    private var popoverCloseToken: (any NSObjectProtocol)?
 
     init(providerId: String,
          store: UsageStore,
@@ -113,19 +115,52 @@ final class BallWindowController {
             rootView: HoverSummaryView(store: store, providerId: providerId))
         hoverPopover = popover
         guard popover.isShown == false else { return }
-        // Anchor the popover on the ball itself (not the whole canvas): the
-        // canvas has a `canvasMargin` on every side that would otherwise push
-        // the popover ~8pt away from the visible ball edge.
-        // NSHostingView is unflipped by default (bottom-left origin) and the
-        // ball is centered symmetrically, so `(canvasMargin, canvasMargin)` is
-        // the correct anchor regardless of top-vs-bottom origin. If the canvas
-        // ever becomes asymmetric or the hosting view is flipped, recompute.
         let ballRect = NSRect(x: Theme.canvasMargin, y: Theme.canvasMargin,
                               width: Theme.ballSize, height: Theme.ballSize)
         popover.show(relativeTo: ballRect, of: contentView, preferredEdge: .minX)
+        // NSPopover's internal coordinate conversion is unreliable for
+        // non-activating floating panels: the initial placement is correct,
+        // but SwiftUI layout updates later trigger a re-anchor that shifts
+        // the popover ~100pt left and ~140pt down. Immediately reposition
+        // and observe the popover window's frame to correct any drift.
+        repositionPopover(popover, contentView: contentView, ballRect: ballRect)
+        if let pw = popover.contentViewController?.view.window {
+            hoverFrameObserver?.invalidate()
+            hoverFrameObserver = pw.observe(\.frame, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated {
+                    self?.repositionPopover(popover, contentView: contentView, ballRect: ballRect)
+                }
+            }
+            // Invalidate the observer when the popover closes (semitransient closes
+            // on click-away, not just via hidePopover).
+            popoverCloseToken = NotificationCenter.default.addObserver(
+                forName: NSPopover.willCloseNotification, object: popover, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.hoverFrameObserver?.invalidate()
+                        self?.hoverFrameObserver = nil
+                    }
+                }
+        }
+    }
+
+    /// Correct the popover window's position so it's flush with the ball's
+    /// left edge and vertically centered on the ball.
+    private func repositionPopover(_ popover: NSPopover, contentView: NSView, ballRect: NSRect) {
+        guard let pw = popover.contentViewController?.view.window,
+              let screenBallRect = contentView.window?
+                .convertToScreen(contentView.convert(ballRect, to: nil)) else { return }
+        let expectedX = screenBallRect.minX - pw.frame.width
+        let expectedY = screenBallRect.midY - pw.frame.height / 2
+        if abs(pw.frame.origin.x - expectedX) > 0.5 || abs(pw.frame.origin.y - expectedY) > 0.5 {
+            pw.setFrameOrigin(NSPoint(x: expectedX, y: expectedY))
+        }
     }
 
     private func hidePopover() {
+        hoverFrameObserver?.invalidate()
+        hoverFrameObserver = nil
+        if let token = popoverCloseToken { NotificationCenter.default.removeObserver(token) }
+        popoverCloseToken = nil
         hoverPopover?.close()
     }
 
