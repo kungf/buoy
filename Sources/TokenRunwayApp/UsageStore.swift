@@ -17,6 +17,8 @@ final class UsageStore: ObservableObject {
     @Published private(set) var coreQuotaIds: [String: String] = [:]
     /// Click-through mode: the ball lets mouse events pass through, ambient display only (DESIGN.md §8.5)
     @Published var clickThrough: Bool = false
+    /// Error message when a provider has no credentials in ~/.trwy/config.json.
+    static let notConfiguredError = "Not configured"
     /// Polling paused (toggled from the right-click menu)
     @Published var pollingPaused: Bool = false
 
@@ -100,7 +102,7 @@ final class UsageStore: ObservableObject {
     private func fetchOne(_ id: String) async {
         guard let provider = providers[id] else { return }
         guard let credential = CredentialStore.credential(for: id, from: CredentialStore.load()) else {
-            providerErrors[id] = "Not configured"
+            providerErrors[id] = Self.notConfiguredError
             return
         }
         do {
@@ -163,6 +165,12 @@ final class UsageStore: ObservableObject {
     /// Human-readable provider name for hover popover / detail views.
     func providerDisplayName(for id: String) -> String {
         providers[id]?.manifest.displayName ?? id
+    }
+
+    /// Auth mode for a provider (drives settings form).
+    var knownProviderIds: [String] { providerOrder }
+    func providerAuthMode(for id: String) -> AuthMode? {
+        providers[id]?.manifest.authMode
     }
 
     /// Toggle a provider onto the ball (dashboard eye toggle / right-click "remove from ball").
@@ -299,6 +307,7 @@ final class UsageStore: ObservableObject {
     /// Ball state for a single provider (uses its core window to detect fast-burn).
     func ballState(for providerId: String) -> BallState {
         guard let report = report(for: providerId) else {
+            if providerErrors[providerId] == Self.notConfiguredError { return .notConfigured }
             return providerErrors[providerId] != nil ? .error : .idle
         }
         let interval = pollInterval(forProvider: providerId)
@@ -322,7 +331,8 @@ final class UsageStore: ObservableObject {
         let badges: [AlertBadge] = isPrimary ? alertBadges : []
 
         guard let report = report(for: providerId) else {
-            return coldBallModel(badges: badges, breath: 0, stale: stale)
+            let state = ballState(for: providerId)
+            return coldBallModel(badges: badges, breath: 0, stale: stale, state: state)
         }
 
         let state = ballState(for: providerId)
@@ -337,11 +347,13 @@ final class UsageStore: ObservableObject {
     }
 
     /// Cold start: no data yet.
-    private func coldBallModel(badges: [AlertBadge], breath: Double, stale: Bool) -> BallModel {
+    private func coldBallModel(badges: [AlertBadge], breath: Double, stale: Bool,
+                               state: BallState = .idle) -> BallModel {
         BallModel(mode: .cold, ringUsed: nil, midRingUsed: nil, coreLevel: nil,
                   ringHealth: nil, midRingHealth: nil, coreHealth: nil,
-                  centerText: "--", subText: "", spentRecentText: nil,
-                  currencyBadge: nil, state: .idle,
+                  centerText: "--", subText: state == .notConfigured ? "no key" : "",
+                  spentRecentText: nil,
+                  currencyBadge: nil, state: state,
                   breathUrgency: breath, isStale: stale, alertBadges: badges)
     }
 
@@ -442,7 +454,7 @@ final class UsageStore: ObservableObject {
         case .depleted: return .depleted
         case .nearDepleted: return .nearDepleted
         case .fastBurn: return .fastBurn
-        case .idle, .consuming: return nil
+        case .idle, .consuming, .notConfigured: return nil
         }
     }
 

@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMainMenu()
         store.start()
         ballController = BallPanelController(
             store: store,
@@ -56,8 +57,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         detailController?.show()
     }
 
-    // MARK: - 菜单栏（穿透模式退出阀；Phase 6.2 会扩展为完整菜单）
+    // MARK: - 菜单栏
 
+    /// Minimal main menu with an Edit menu so Cmd+V / Cmd+C / Cmd+A work in text fields.
+    /// LSUIElement apps do not get a default menu bar — without this, standard clipboard
+    /// shortcuts have no `paste:` / `copy:` / `selectAll:` responder.
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        // --- App menu ---
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit TokenRunway",
+                        action: #selector(NSApplication.terminate(_:)),
+                        keyEquivalent: "q")
+        let appItem = NSMenuItem()
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        // --- Edit menu (enables Cmd+V / Cmd+C / Cmd+X / Cmd+A / Cmd+Z) ---
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editItem = NSMenuItem()
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        NSApplication.shared.mainMenu = mainMenu
+    }
+
+    /// 菜单栏图标（穿透模式退出阀；Phase 6.2 会扩展为完整菜单）
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {

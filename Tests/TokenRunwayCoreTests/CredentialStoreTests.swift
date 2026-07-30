@@ -63,4 +63,37 @@ final class CredentialStoreTests: XCTestCase {
     func testLoadReturnsNilForMissingFile() {
         XCTAssertNil(CredentialStore.load(from: tempURL)) // 未写入任何文件
     }
+
+    func testSaveRoundTrip() throws {
+        // Arrange
+        var config = TokenRunwayConfigFile(providers: [:])
+        config.providers["deepseek"] = ProviderCredentials(auth: "bearer", token: "sk-test-token")
+        config.providers["volcano"] = ProviderCredentials(auth: "volcSignature", ak: "ak-test", sk: "sk-test")
+
+        // Act
+        try CredentialStore.save(config, to: tempURL)
+
+        // Assert — load back and verify
+        let loaded = CredentialStore.load(from: tempURL)
+        XCTAssertNotNil(loaded)
+        XCTAssertEqual(loaded?.providers["deepseek"]?.token, "sk-test-token")
+        XCTAssertEqual(loaded?.providers["deepseek"]?.auth, "bearer")
+        XCTAssertEqual(loaded?.providers["volcano"]?.ak, "ak-test")
+        XCTAssertEqual(loaded?.providers["volcano"]?.sk, "sk-test")
+        XCTAssertEqual(loaded?.providers["volcano"]?.auth, "volcSignature")
+    }
+
+    func testSaveUpdatesExistingConfig() throws {
+        // Arrange — write an initial config
+        writeConfig(#"{"providers":{"deepseek":{"token":"old-token"}}}"#)
+
+        // Act — load, modify, save
+        var config = CredentialStore.load(from: tempURL)!
+        config.providers["deepseek"] = ProviderCredentials(auth: "bearer", token: "new-token")
+        try CredentialStore.save(config, to: tempURL)
+
+        // Assert
+        let loaded = CredentialStore.load(from: tempURL)
+        XCTAssertEqual(loaded?.providers["deepseek"]?.token, "new-token")
+    }
 }

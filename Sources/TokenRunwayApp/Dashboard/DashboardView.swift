@@ -8,6 +8,7 @@ struct DashboardView: View {
 
     @State private var expanded: Set<String> = []
     @State private var isPinned = false
+    @State private var settingsProviderId: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -50,7 +51,8 @@ struct DashboardView: View {
                             report: report,
                             error: store.providerErrors[report.providerId],
                             isExpanded: expanded.contains(report.providerId),
-                            onToggle: { toggle(report.providerId) }
+                            onToggle: { toggle(report.providerId) },
+                            onConfigure: { settingsProviderId = $0 }
                         )
                     }
                     // Providers with an error but never fetched (not present in reports)
@@ -61,15 +63,27 @@ struct DashboardView: View {
                             Circle().fill(.gray).frame(width: 8, height: 8)
                             Text(id).font(.subheadline.weight(.medium))
                             Spacer()
-                            Button {
-                                store.toggleSelection(id)
-                            } label: {
-                                Image(systemName: store.isSelected(id) ? "eye.fill" : "eye")
-                                    .font(.caption)
-                                    .foregroundStyle(store.isSelected(id) ? Color.accentColor : Color.secondary)
+                            if store.providerErrors[id] == UsageStore.notConfiguredError {
+                                Button {
+                                    settingsProviderId = id
+                                } label: {
+                                    Image(systemName: "gearshape")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Configure API credentials")
+                            } else {
+                                Button {
+                                    store.toggleSelection(id)
+                                } label: {
+                                    Image(systemName: store.isSelected(id) ? "eye.fill" : "eye")
+                                        .font(.caption)
+                                        .foregroundStyle(store.isSelected(id) ? Color.accentColor : Color.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .help(store.isSelected(id) ? "On ball — click to remove" : "Add to ball")
                             }
-                            .buttonStyle(.borderless)
-                            .help(store.isSelected(id) ? "On ball — click to remove" : "Add to ball")
                             Text(store.providerErrors[id] ?? "")
                                 .font(.caption)
                                 .foregroundStyle(.red)
@@ -85,6 +99,14 @@ struct DashboardView: View {
         .padding(14)
         .frame(width: 380, height: 460)
         .onAppear { store.refreshIfStale() }
+        .sheet(isPresented: .init(
+            get: { settingsProviderId != nil },
+            set: { if !$0 { settingsProviderId = nil } }
+        )) {
+            if let id = settingsProviderId, let mode = store.providerAuthMode(for: id) {
+                ProviderSettingsView(store: store, providerId: id, authMode: mode)
+            }
+        }
     }
 
     private func toggle(_ id: String) {
@@ -152,6 +174,7 @@ private struct ProviderSection: View {
     let error: String?
     let isExpanded: Bool
     let onToggle: () -> Void
+    let onConfigure: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -169,15 +192,27 @@ private struct ProviderSection: View {
                     Text(primaryMetric)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
-                    Button {
-                        store.toggleSelection(report.providerId)
-                    } label: {
-                        Image(systemName: store.isSelected(report.providerId) ? "eye.fill" : "eye")
-                            .font(.caption)
-                            .foregroundStyle(store.isSelected(report.providerId) ? Color.accentColor : Color.secondary)
+                    if error == UsageStore.notConfiguredError {
+                        Button {
+                            onConfigure(report.providerId)
+                        } label: {
+                            Image(systemName: "gearshape")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Configure API credentials")
+                    } else {
+                        Button {
+                            store.toggleSelection(report.providerId)
+                        } label: {
+                            Image(systemName: store.isSelected(report.providerId) ? "eye.fill" : "eye")
+                                .font(.caption)
+                                .foregroundStyle(store.isSelected(report.providerId) ? Color.accentColor : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(store.isSelected(report.providerId) ? "On ball — click to remove" : "Add to ball")
                     }
-                    .buttonStyle(.borderless)
-                    .help(store.isSelected(report.providerId) ? "On ball — click to remove" : "Add to ball")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)

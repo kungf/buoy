@@ -42,6 +42,17 @@ public enum CredentialStore {
         return try? JSONDecoder().decode(TokenRunwayConfigFile.self, from: data)
     }
 
+    /// Write config to disk (chmod 0700 dir, 0600 file, never log keys).
+    public static func save(_ config: TokenRunwayConfigFile, to url: URL = defaultURL) throws {
+        let dir = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir,
+                                                withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
     /// 条目 → 统一 Credential。ak/sk 齐备优先 volcAccessKey，其次 bearer token。
     public static func credential(for providerId: String, from config: TokenRunwayConfigFile?) -> Credential? {
         guard let entry = config?.providers[providerId] else { return nil }

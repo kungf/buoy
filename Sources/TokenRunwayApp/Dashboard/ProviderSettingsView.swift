@@ -1,0 +1,275 @@
+import SwiftUI
+import TokenRunwayCore
+
+/// Credential settings sheet for a single provider. Renders provider-specific
+/// auth form fields (bearer token or volc AK/SK) and writes to ~/.trwy/config.json.
+struct ProviderSettingsView: View {
+    @ObservedObject var store: UsageStore
+    let providerId: String
+    let authMode: AuthMode
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var token: String = ""
+    @State private var ak: String = ""
+    @State private var sk: String = ""
+    @State private var saveError: String?
+    @State private var isSaving = false
+    @State private var showHelp = false
+    @State private var showToken = false
+    @State private var showSK = false
+
+    private var displayName: String {
+        store.providerDisplayName(for: providerId)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack(spacing: 10) {
+                Image(systemName: ProviderTheme.theme(for: providerId).icon)
+                    .foregroundStyle(ProviderTheme.theme(for: providerId).color)
+                    .font(.title3)
+                Text("Configure \(displayName)")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Divider()
+
+            // Form fields — provider-specific
+            switch authMode {
+            case .bearer:
+                bearerFields
+            case .volcSignature:
+                volcFields
+            case .consoleSession:
+                Text("Browser-based auth is configured via the console.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Error
+            if let error = saveError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Divider()
+
+            // Actions
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(action: save) {
+                    if isSaving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Save")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave || isSaving)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
+        .onAppear { loadExisting() }
+    }
+
+    // MARK: - Bearer token (DeepSeek)
+
+    private var bearerFields: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("API Token").font(.caption.weight(.medium))
+            HStack(spacing: 4) {
+                Group {
+                    if showToken {
+                        TextField("sk-...", text: $token)
+                    } else {
+                        SecureField("sk-...", text: $token)
+                    }
+                }
+                .textFieldStyle(.roundedBorder)
+                Button { showToken.toggle() } label: {
+                    Image(systemName: showToken ? "eye" : "eye.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(showToken ? "Hide token" : "Show token")
+            }
+            HStack(spacing: 4) {
+                Text("Paste your API token from the \(displayName) console.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                helpButton
+            }
+        }
+    }
+
+    // MARK: - Volc IAM AK/SK (Volcano)
+
+    private var volcFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Access Key (AK)").font(.caption.weight(.medium))
+                TextField("AKLT...", text: $ak)
+                    .textFieldStyle(.roundedBorder)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Secret Key (SK)").font(.caption.weight(.medium))
+                HStack(spacing: 4) {
+                    Group {
+                        if showSK {
+                            TextField("...", text: $sk)
+                        } else {
+                            SecureField("...", text: $sk)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    Button { showSK.toggle() } label: {
+                        Image(systemName: showSK ? "eye" : "eye.slash")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(showSK ? "Hide secret key" : "Show secret key")
+                }
+            }
+            HStack(spacing: 4) {
+                Text("Create an IAM access key from the Volcano Ark console.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                helpButton
+            }
+        }
+    }
+
+    // MARK: - Help
+
+    private var helpButton: some View {
+        Button {
+            showHelp = true
+        } label: {
+            Image(systemName: "questionmark.circle")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showHelp, arrowEdge: .bottom) {
+            helpContent
+                .padding(14)
+                .frame(width: 300)
+        }
+    }
+
+    @ViewBuilder
+    private var helpContent: some View {
+        switch authMode {
+        case .bearer:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("How to get your API token")
+                    .font(.subheadline.weight(.semibold))
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    step(1, "Open \(displayName) Platform")
+                    Text("https://platform.deepseek.com")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.blue)
+                        .padding(.leading, 20)
+                    step(2, "Click \"API Keys\" in the left sidebar")
+                    step(3, "Click \"Create new key\", name it, copy the token")
+                    step(4, "Paste the token above and save")
+                }
+            }
+        case .volcSignature:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("How to create your AK/SK")
+                    .font(.subheadline.weight(.semibold))
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    step(1, "Open Volcano Ark Console")
+                    Text("https://console.volcengine.com/ark")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.blue)
+                        .padding(.leading, 20)
+                    step(2, "Click your avatar in the top-right corner")
+                    step(3, "Select \"API Access Key\" (API 访问密钥)")
+                    step(4, "Click \"Create New Key\" (新建密钥)")
+                    step(5, "Copy the AK and SK, paste above and save")
+                }
+            }
+        case .consoleSession:
+            EmptyView()
+        }
+    }
+
+    private func step(_ num: Int, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("\(num).")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .trailing)
+            Text(text)
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - Logic
+
+    private var canSave: Bool {
+        switch authMode {
+        case .bearer: return !token.trimmingCharacters(in: .whitespaces).isEmpty
+        case .volcSignature: return !ak.trimmingCharacters(in: .whitespaces).isEmpty
+            && !sk.trimmingCharacters(in: .whitespaces).isEmpty
+        case .consoleSession: return false
+        }
+    }
+
+    private func loadExisting() {
+        let config = CredentialStore.load()
+        switch authMode {
+        case .bearer:
+            token = config?.providers[providerId]?.token ?? ""
+        case .volcSignature:
+            ak = config?.providers[providerId]?.ak ?? ""
+            sk = config?.providers[providerId]?.sk ?? ""
+        case .consoleSession:
+            break
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        saveError = nil
+        let url = CredentialStore.defaultURL
+        var config = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
+
+        var entry = config.providers[providerId] ?? ProviderCredentials()
+        switch authMode {
+        case .bearer:
+            entry.auth = "bearer"
+            entry.token = token.trimmingCharacters(in: .whitespaces)
+        case .volcSignature:
+            entry.auth = "volcSignature"
+            entry.ak = ak.trimmingCharacters(in: .whitespaces)
+            entry.sk = sk.trimmingCharacters(in: .whitespaces)
+        case .consoleSession:
+            break
+        }
+        config.providers[providerId] = entry
+
+        do {
+            try CredentialStore.save(config, to: url)
+            isSaving = false
+            dismiss()
+            Task { await store.refresh() }
+        } catch {
+            saveError = "Failed to save: \(error.localizedDescription)"
+            isSaving = false
+        }
+    }
+}

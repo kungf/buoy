@@ -14,6 +14,8 @@ public enum BallState: String, Sendable, Equatable {
     case depleted
     /// 拉取失败 / 陈旧：灰，脉冲虚线
     case error
+    /// 未配置凭证：不报警，平静显示"需配置"
+    case notConfigured
 }
 
 /// 纯函数状态解析（与 HealthScore 同层，可单测；DESIGN.md §8.4）。
