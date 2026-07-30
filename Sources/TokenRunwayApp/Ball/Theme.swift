@@ -34,4 +34,15 @@ enum Theme {
     /// Lifts the nameplate up from the canvas bottom so it sits on the ball's bottom rim
     /// (canvasMargin = 8). Negative = up; the pill straddles the rim and hangs into the margin.
     static let nameplateOffsetY: CGFloat = -3
+
+    // MARK: Hover panel
+
+    /// Padding inside the hover panel around the SwiftUI content.
+    static let hoverPanelPadding: CGFloat = 8
+    /// Corner radius for the hover panel card.
+    static let hoverPanelCornerRadius: CGFloat = 14
+    /// Gap between the ball's left edge and the hover panel.
+    static let hoverPanelGap: CGFloat = 10
+    /// Delay before hiding the hover panel after the mouse exits the ball.
+    static let hoverHideDelay: TimeInterval = 0.2
 }

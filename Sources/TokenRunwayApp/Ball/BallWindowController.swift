@@ -25,9 +25,9 @@ final class BallWindowController {
     private let onHideAll: () -> Void
     private let onPositionChange: (String, NSPoint) -> Void
     private let panel: NSPanel
-    private var hoverPopover: NSPopover?
-    private var hoverFrameObserver: NSKeyValueObservation?
-    private var popoverCloseToken: (any NSObjectProtocol)?
+    private var hoverPanel: NSPanel?
+    private var hoverCloseMonitor: Any?
+    private var hoverExitWorkItem: DispatchWorkItem?
 
     init(providerId: String,
          store: UsageStore,
@@ -81,7 +81,11 @@ final class BallWindowController {
             self?.store.cycleCoreWindow(forward: forward, for: pid)
         }
         eventView.onHover = { [weak self] inside in
-            inside ? self?.showPopover() : self?.hidePopover()
+            if inside {
+                self?.showPopover()
+            } else {
+                self?.scheduleConditionalHide()
+            }
         }
         // Badges are drawn only on the primary ball, so hit-test only there (avoids phantom taps).
         eventView.badgeProvider = { [weak self] in
@@ -101,67 +105,131 @@ final class BallWindowController {
     /// Current panel origin (top-left), so the coordinator can avoid stacking a new ball on top of it.
     var currentOrigin: NSPoint { panel.frame.origin }
 
-    // MARK: Hover popover
+    // MARK: Hover panel
 
     private func showPopover() {
-        guard !store.clickThrough, let contentView = panel.contentView else {
+        guard !store.clickThrough, let ballContentView = panel.contentView else {
             hidePopover()
             return
         }
-        let popover = hoverPopover ?? NSPopover()
-        popover.behavior = .semitransient
-        popover.animates = false
-        popover.contentViewController = NSHostingController(
+
+        // Cancel any pending hide from a previous mouse-exit
+        hoverExitWorkItem?.cancel()
+        hoverExitWorkItem = nil
+
+        guard hoverPanel == nil else { return }
+
+        let hostingController = NSHostingController(
             rootView: HoverSummaryView(store: store, providerId: providerId))
-        hoverPopover = popover
-        guard popover.isShown == false else { return }
+        hostingController.view.layoutSubtreeIfNeeded()
+        let fit = hostingController.view.fittingSize
+        let pad = Theme.hoverPanelPadding
+        let pw = fit.width + pad * 2
+        let ph = fit.height + pad * 2
+
+        // --- shadow wrapper (no mask, carries the shadow) ---
+        let shadowView = NSView(frame: NSRect(x: 0, y: 0, width: pw, height: ph))
+        shadowView.wantsLayer = true
+        shadowView.layer?.shadowColor = NSColor.black.cgColor
+        shadowView.layer?.shadowOpacity = 0.15
+        shadowView.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        shadowView.layer?.shadowRadius = 10
+        shadowView.layer?.shadowPath = CGPath(
+            roundedRect: shadowView.bounds,
+            cornerWidth: Theme.hoverPanelCornerRadius,
+            cornerHeight: Theme.hoverPanelCornerRadius,
+            transform: nil)
+
+        // --- rounded container (clips content) ---
+        let container = NSView(frame: shadowView.bounds)
+        container.wantsLayer = true
+        container.layer?.cornerRadius = Theme.hoverPanelCornerRadius
+        container.layer?.masksToBounds = true
+        container.layer?.backgroundColor = NSColor.windowBackgroundColor
+            .withAlphaComponent(0.97).cgColor
+        container.layer?.borderWidth = 0.5
+        container.layer?.borderColor = NSColor.separatorColor
+            .withAlphaComponent(0.25).cgColor
+
+        shadowView.addSubview(container)
+
+        hostingController.view.frame = NSRect(
+            x: pad, y: pad, width: fit.width, height: fit.height)
+        container.addSubview(hostingController.view)
+
+        // --- window ---
+        let hp = NSPanel(
+            contentRect: shadowView.frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false)
+        hp.isOpaque = false
+        hp.backgroundColor = .clear
+        hp.level = .floating
+        hp.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        hp.hidesOnDeactivate = false
+        hp.contentView = shadowView
+        hoverPanel = hp
+
         let ballRect = NSRect(x: Theme.canvasMargin, y: Theme.canvasMargin,
                               width: Theme.ballSize, height: Theme.ballSize)
-        popover.show(relativeTo: ballRect, of: contentView, preferredEdge: .minX)
-        // NSPopover's internal coordinate conversion is unreliable for
-        // non-activating floating panels: the initial placement is correct,
-        // but SwiftUI layout updates later trigger a re-anchor that shifts
-        // the popover ~100pt left and ~140pt down. Immediately reposition
-        // and observe the popover window's frame to correct any drift.
-        repositionPopover(popover, contentView: contentView, ballRect: ballRect)
-        if let pw = popover.contentViewController?.view.window {
-            hoverFrameObserver?.invalidate()
-            hoverFrameObserver = pw.observe(\.frame, options: [.new]) { [weak self] _, _ in
-                MainActor.assumeIsolated {
-                    self?.repositionPopover(popover, contentView: contentView, ballRect: ballRect)
+
+        hp.orderFrontRegardless()
+        positionHoverPanel(hp, contentView: ballContentView, ballRect: ballRect)
+
+        // Click-away: close when clicking outside both the hover panel and the ball
+        hoverCloseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let hp = self.hoverPanel else { return }
+                let mouse = NSEvent.mouseLocation
+                if !hp.frame.contains(mouse) && !self.panel.frame.contains(mouse) {
+                    self.hidePopover()
                 }
             }
-            // Invalidate the observer when the popover closes (semitransient closes
-            // on click-away, not just via hidePopover).
-            popoverCloseToken = NotificationCenter.default.addObserver(
-                forName: NSPopover.willCloseNotification, object: popover, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated {
-                        self?.hoverFrameObserver?.invalidate()
-                        self?.hoverFrameObserver = nil
-                    }
-                }
+            return event
         }
     }
 
-    /// Correct the popover window's position so it's flush with the ball's
-    /// left edge and vertically centered on the ball.
-    private func repositionPopover(_ popover: NSPopover, contentView: NSView, ballRect: NSRect) {
-        guard let pw = popover.contentViewController?.view.window,
-              let screenBallRect = contentView.window?
-                .convertToScreen(contentView.convert(ballRect, to: nil)) else { return }
-        let expectedX = screenBallRect.minX - pw.frame.width
-        let expectedY = screenBallRect.midY - pw.frame.height / 2
-        if abs(pw.frame.origin.x - expectedX) > 0.5 || abs(pw.frame.origin.y - expectedY) > 0.5 {
-            pw.setFrameOrigin(NSPoint(x: expectedX, y: expectedY))
+    /// Position the hover panel flush against the ball's left edge, vertically centered.
+    private func positionHoverPanel(_ hp: NSPanel, contentView: NSView, ballRect: NSRect) {
+        guard let screenBallRect = contentView.window?
+            .convertToScreen(contentView.convert(ballRect, to: nil)) else { return }
+        let gap: CGFloat = Theme.hoverPanelGap
+        let expectedX = screenBallRect.minX - hp.frame.width - gap
+        let expectedY = screenBallRect.midY - hp.frame.height / 2
+        let expected = NSPoint(x: expectedX, y: expectedY)
+        if abs(hp.frame.origin.x - expected.x) > 0.5
+            || abs(hp.frame.origin.y - expected.y) > 0.5 {
+            hp.setFrameOrigin(expected)
         }
+    }
+
+    /// After the mouse leaves the ball, defer hiding briefly so the user can
+    /// move the pointer onto the hover panel. If the pointer is still outside
+    /// both windows after the delay, close the panel.
+    private func scheduleConditionalHide() {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let hp = self.hoverPanel else { return }
+            let mouse = NSEvent.mouseLocation
+            if !hp.frame.contains(mouse) && !self.panel.frame.contains(mouse) {
+                self.hidePopover()
+            } else {
+                self.scheduleConditionalHide()
+            }
+        }
+        hoverExitWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Theme.hoverHideDelay, execute: work)
     }
 
     private func hidePopover() {
-        hoverFrameObserver?.invalidate()
-        hoverFrameObserver = nil
-        if let token = popoverCloseToken { NotificationCenter.default.removeObserver(token) }
-        popoverCloseToken = nil
-        hoverPopover?.close()
+        hoverExitWorkItem?.cancel()
+        hoverExitWorkItem = nil
+        if let monitor = hoverCloseMonitor { NSEvent.removeMonitor(monitor) }
+        hoverCloseMonitor = nil
+        hoverPanel?.close()
+        hoverPanel = nil
     }
 
     // MARK: Right-click menu (per ball)

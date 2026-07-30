@@ -1,7 +1,8 @@
 import SwiftUI
 import TokenRunwayCore
 
-/// Hover overlay: one row per window for the displayed provider (DESIGN.md §8.5 hover=popover).
+/// Hover card: clean single-provider summary with thin progress bars and
+/// a single accent colour drawn from the provider theme.
 struct HoverSummaryView: View {
     @ObservedObject var store: UsageStore
     let providerId: String
@@ -10,55 +11,54 @@ struct HoverSummaryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
             headerView
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
                 .padding(.bottom, 8)
 
-            Divider()
-
             if let report = store.reports.first(where: { $0.providerId == providerId }) {
-                // Quota rows
-                VStack(alignment: .leading, spacing: 0) {
+                // Quota list — no dividers, whitespace separates rows
+                VStack(alignment: .leading, spacing: 6) {
                     ForEach(report.quotas) { quota in
                         quotaRow(quota)
-                        if quota.id != report.quotas.last?.id {
-                            Divider().padding(.leading, 12)
-                        }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
 
                 // Balance
-                if let balance = report.balance {
+                if report.balance != nil || !report.quotas.isEmpty {
                     Divider()
+                        .padding(.horizontal, 14)
+                }
+                if let balance = report.balance {
                     balanceRow(balance)
-                        .padding(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
                 }
             }
         }
-        .frame(width: 240)
+        .frame(width: 220)
     }
 
     // MARK: - Header
 
     private var headerView: some View {
-        HStack(spacing: 6) {
-            Image(systemName: theme.icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(theme.color)
-                .frame(width: 18, height: 18)
-                .background(theme.color.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(theme.color.opacity(0.12))
+                    .frame(width: 26, height: 26)
+                Image(systemName: theme.icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.color)
+            }
 
             Text(store.providerDisplayName(for: providerId))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.primary)
 
             Spacer()
 
-            // Status dot
             Circle()
                 .fill(theme.color)
                 .frame(width: 5, height: 5)
@@ -72,45 +72,42 @@ struct HoverSummaryView: View {
         let health = HealthScore.score(quota: quota, etaSeconds: nil)
 
         return VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text(quota.label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Text(percentText(quota))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.healthColor(health))
             }
 
-            // Progress bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(.primary.opacity(0.1))
-                        .frame(height: 4)
-
-                    RoundedRectangle(cornerRadius: 2)
+                    Capsule()
+                        .fill(.primary.opacity(0.08))
+                        .frame(height: 2.5)
+                    Capsule()
                         .fill(Theme.healthColor(health))
-                        .frame(width: max(geo.size.width * percent, 4), height: 4)
+                        .frame(
+                            width: max(geo.size.width * percent, geo.size.height),
+                            height: 2.5)
                 }
             }
-            .frame(height: 4)
+            .frame(height: 2.5)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
     }
 
     // MARK: - Balance
 
     private func balanceRow(_ balance: BalanceInfo) -> some View {
         HStack {
-            Text("余额")
-                .font(.system(size: 11, weight: .medium))
+            Text("Balance")
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             Spacer()
             Text(String(format: "¥%.2f", balance.total))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.primary)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
         }
     }
 
