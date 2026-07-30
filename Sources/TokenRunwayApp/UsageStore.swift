@@ -160,6 +160,11 @@ final class UsageStore: ObservableObject {
 
     func isSelected(_ id: String) -> Bool { selectedProviderIds.contains(id) }
 
+    /// Human-readable provider name for hover popover / detail views.
+    func providerDisplayName(for id: String) -> String {
+        providers[id]?.manifest.displayName ?? id
+    }
+
     /// Toggle a provider onto the ball (dashboard eye toggle / right-click "remove from ball").
     func toggleSelection(_ id: String) {
         applySelection(currentState().toggling(id))
