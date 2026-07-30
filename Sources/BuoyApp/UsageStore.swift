@@ -308,22 +308,23 @@ final class UsageStore: ObservableObject {
 
     /// Ball display model (BallView's single source of truth, DESIGN.md §8). One per provider.
     func ballModel(for providerId: String) -> BallModel {
-        let breath = breathUrgency(from: coreEta(for: providerId))
         let stale = isStale(for: providerId)
         // Breakthrough badges live only on the primary (first selected) ball to avoid duplicates.
         let isPrimary = providerId == selectedProviderIds.first
         let badges: [AlertBadge] = isPrimary ? alertBadges : []
 
         guard let report = report(for: providerId) else {
-            return coldBallModel(badges: badges, breath: breath, stale: stale)
+            return coldBallModel(badges: badges, breath: 0, stale: stale)
         }
 
         let state = ballState(for: providerId)
 
-        // Balance type: rings collapse to a single balance ball (DESIGN.md §8.3)
+        // Balance type: rings collapse to a single balance ball; breathing is derived from
+        // 5h spend (explosion-free), NOT from ETA, so coreEta is intentionally not computed here.
         if report.balance != nil, !report.quotas.contains(where: { $0.type == .timeWindowed }) {
-            return balanceBallModel(report: report, state: state, badges: badges, breath: breath, stale: stale)
+            return balanceBallModel(report: report, state: state, badges: badges, stale: stale)
         }
+        let breath = breathUrgency(from: coreEta(for: providerId))
         return windowedBallModel(report: report, state: state, badges: badges, breath: breath, stale: stale)
     }
 
@@ -331,24 +332,54 @@ final class UsageStore: ObservableObject {
     private func coldBallModel(badges: [AlertBadge], breath: Double, stale: Bool) -> BallModel {
         BallModel(mode: .cold, ringUsed: nil, midRingUsed: nil, coreLevel: nil,
                   ringHealth: nil, midRingHealth: nil, coreHealth: nil,
-                  centerText: "--", subText: "",
+                  centerText: "--", subText: "", spentRecentText: nil,
                   currencyBadge: nil, state: .idle,
                   breathUrgency: breath, isStale: stale, alertBadges: badges)
     }
 
-    /// Balance type: rings collapse to a single balance ball (DESIGN.md §8.3).
+    /// Last-5h spend for the balance quota (top-up-robust, DESIGN.md §7). nil on cold start.
+    private func consumed5h(for providerId: String) -> Double? {
+        let windowSeconds: TimeInterval = 5 * 3600 // last-5h spend window
+        guard let quota = coreQuota(for: providerId) else { return nil }
+        return forecast.consumed(for: quota, windowSeconds: windowSeconds, now: Date())
+    }
+
+    /// Balance high-water mark: max remaining observed in the sample buffer (render-time
+    /// only; no persistence). Balance samples store `used = -remaining`, so max remaining
+    /// = -min(used). nil when there are no samples.
+    private func balanceHighWater(for quota: Quota) -> Double? {
+        let usedValues = forecast.samples(for: quota.id).map(\.used)
+        guard let minUsed = usedValues.min() else { return nil }
+        return -minUsed
+    }
+
+    /// Balance type: rings collapse to a single balance ball (DESIGN.md §8.3). Drops the ETA
+    /// entirely; breathing is `consumed_5h / remaining` (bounded, explosion-free), liquid
+    /// level/color is `remaining / highWater` (decoupled from breathing).
     private func balanceBallModel(report: ProviderReport, state: BallState,
-                                  badges: [AlertBadge], breath: Double, stale: Bool) -> BallModel {
-        let eta = coreEta(for: report.providerId)
-        let balHealth = HealthScore.forBalance(etaSeconds: eta)
+                                  badges: [AlertBadge], stale: Bool) -> BallModel {
+        let providerId = report.providerId
+        let quota = coreQuota(for: providerId)
+        let remaining = quota?.effectiveRemaining ?? report.balance?.total ?? 0
+
+        // Liquid level + color: remaining vs high-water mark (decoupled from breathing).
+        let highWater = quota.flatMap { balanceHighWater(for: $0) } ?? remaining
+        let level = highWater > 0 ? min(max(remaining / highWater, 0), 1) : 0
+
+        // Breathing: consumed_5h / remaining (the bounded 5h/ETA form; static = calm).
+        let consumedOpt = consumed5h(for: providerId)
+        let consumed = consumedOpt ?? 0
+        let breath = remaining > 0 ? min(max(consumed / remaining, 0), 1) : 0
+
+        // Upper (small): last-5h spend; Lower (big): balance.
+        let spentText = consumedOpt.map { "¥\(String(format: "%.2f", $0))·5h" } ?? "--"
+
         return BallModel(mode: .balance, ringUsed: nil, midRingUsed: nil,
-                         coreLevel: balHealth,
-                         ringHealth: nil, midRingHealth: nil, coreHealth: balHealth,
+                         coreLevel: level, ringHealth: nil, midRingHealth: nil, coreHealth: level,
                          centerText: String(format: "%.2f", report.balance?.total ?? 0),
-                         subText: formatETA(eta),
+                         subText: "", spentRecentText: spentText,
                          currencyBadge: report.balance.map { currencySymbol($0.currency) },
-                         state: state, breathUrgency: breath, isStale: stale,
-                         alertBadges: badges)
+                         state: state, breathUrgency: breath, isStale: stale, alertBadges: badges)
     }
 
     /// Windowed type: outer ring (30d) + middle ring (7d) + core liquid (active window).
@@ -376,7 +407,7 @@ final class UsageStore: ObservableObject {
         return BallModel(mode: isError ? .error : .windowed,
                          ringUsed: ringUsed, midRingUsed: midUsed, coreLevel: coreLevel,
                          ringHealth: ringHealth, midRingHealth: midHealth, coreHealth: coreHealth,
-                         centerText: center, subText: sub, currencyBadge: nil,
+                         centerText: center, subText: sub, spentRecentText: nil, currencyBadge: nil,
                          state: state, breathUrgency: breath, isStale: stale,
                          alertBadges: badges)
     }

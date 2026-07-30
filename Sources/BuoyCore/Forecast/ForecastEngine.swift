@@ -1,26 +1,33 @@
 import Foundation
 
-/// 预测引擎：收集每个 quota 的采样点，估算燃烧率与 ETA（DESIGN.md §7）。
+/// Forecast engine: collects per-quota samples and estimates burn rate / ETA
+/// (DESIGN.md §7).
 ///
-/// 值类型（struct 语义）：`ingest` 产生新拷贝，无共享可变状态（coding-style immutability）。
-/// Phase 1：内存环形 buffer；持久化与 per-provider 轮询间隔在 Phase 2 补。
+/// Value type (struct semantics): `ingest` produces a new copy with no shared
+/// mutable state (coding-style immutability). Phase 1: in-memory ring buffer;
+/// persistence and per-provider poll intervals land in Phase 2.
 ///
-/// **采样量约定**：BurnRateEstimator 期望一个"消耗时单调递增"的量，并把"回落"视作 reset/断段。
-/// - windowed：直接用 `used`（窗口内单调递增，reset 后跳回 0 -> 自然断段）。
-/// - balance：用 `-remaining`。余额消耗时 remaining 递减 -> `-remaining` 递增；充值/赠送到期回升
-///   时 remaining 跳升 -> `-remaining` 回落 -> 触发断段（即 DESIGN §13 的"跳崖识别"基线重置）。
-///   这样复用已有 reset 启发式，无需改动 BurnRateEstimator。
+/// **Sample-value convention**: BurnRateEstimator expects a quantity that is
+/// monotonic while being consumed, and treats any drop as a reset / segment break.
+/// - windowed: use `used` directly (monotonic within a window; reset to 0 ->
+///   natural segment break).
+/// - balance: use `-remaining`. Spending drops `remaining` -> `-remaining`
+///   rises; a top-up / grant expiry raises `remaining` -> `-remaining` drops ->
+///   triggers a segment break (the "cliff detection" baseline reset from
+///   DESIGN §13). This reuses the existing reset heuristic, so BurnRateEstimator
+///   needs no changes.
 public struct ForecastEngine: Sendable, Equatable, Codable {
     private var samplesByQuota: [String: [UsageSample]] = [:]
     public let maxSamplesPerQuota: Int
     public let estimator: BurnRateEstimator
 
-    public init(maxSamplesPerQuota: Int = 120, estimator: BurnRateEstimator = BurnRateEstimator()) {
+    public init(maxSamplesPerQuota: Int = 100, estimator: BurnRateEstimator = BurnRateEstimator()) {
         self.maxSamplesPerQuota = maxSamplesPerQuota
         self.estimator = estimator
     }
 
-    /// 摄入一次拉取结果：对每个可追踪的 quota 追加一个采样点（超出容量丢最旧）。
+    /// Ingest one fetch result: append a sample for each trackable quota
+    /// (drop oldest beyond capacity).
     public mutating func ingest(report: ProviderReport, pollInterval: TimeInterval) {
         for quota in report.quotas {
             guard let value = sampleValue(for: quota) else { continue }
@@ -33,24 +40,46 @@ public struct ForecastEngine: Sendable, Equatable, Codable {
         }
     }
 
-    /// 该 quota 的采样序列（按时间升序）。供 sparkline 直接取用。
+    /// Sample sequence for this quota (ascending by time). Used directly by sparklines.
     public func samples(for quotaId: String) -> [UsageSample] {
         samplesByQuota[quotaId] ?? []
     }
 
-    /// 燃烧率（单位/秒）。冷启动或样本不足返回 nil。
+    /// Burn rate (units / second). nil on cold start or insufficient samples.
     public func burnRate(for quota: Quota, pollInterval: TimeInterval) -> Double? {
         estimator.burnRate(samples: samples(for: quota.id), pollInterval: pollInterval)
     }
 
-    /// ETA（秒）= remaining / burnRate。无法估计时返回 nil（UI 显示 "--"）。
+    /// ETA (seconds) = remaining / burnRate. nil when not estimable (UI shows "--").
     public func eta(for quota: Quota, pollInterval: TimeInterval) -> TimeInterval? {
         guard let remaining = quota.effectiveRemaining, remaining > 0,
               let rate = burnRate(for: quota, pollInterval: pollInterval), rate > 0 else { return nil }
         return remaining / rate
     }
 
-    /// 单调递增的采样代理量。rateLimit 不追踪。
+    /// Spend over the trailing `windowSeconds` (e.g. last 5h), top-up-robust.
+    ///
+    /// Sums only positive `used` deltas across consecutive in-window samples:
+    /// for balance quotas `used = -remaining`, so a spend (remaining down) is a
+    /// positive delta and a top-up (remaining up) is clipped to 0. This is
+    /// additive (no division by a near-zero rate), so a static balance yields 0
+    /// instead of an exploding ETA. Returns nil on cold start (<2 in-window samples).
+    ///
+    /// Gap-spanning pairs are intentionally kept: a net decrease across a gap can
+    /// only under-report true spend (top-ups offset), never over-report.
+    public func consumed(for quota: Quota, windowSeconds: TimeInterval, now: Date) -> Double? {
+        let cutoff = now.addingTimeInterval(-windowSeconds)
+        let windowed = samples(for: quota.id).filter { $0.at >= cutoff }
+        guard windowed.count >= 2 else { return nil }
+        var spent: Double = 0
+        for i in 1..<windowed.count {
+            let delta = windowed[i].used - windowed[i - 1].used
+            if delta > 0 { spent += delta }
+        }
+        return spent
+    }
+
+    /// Monotonic sample-proxy quantity. rateLimit is not tracked.
     private func sampleValue(for quota: Quota) -> Double? {
         switch quota.type {
         case .timeWindowed:

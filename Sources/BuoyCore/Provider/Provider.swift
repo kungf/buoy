@@ -46,7 +46,9 @@ public struct ProviderManifest: Sendable, Equatable {
     public let authMode: AuthMode
     public let defaultBaseURL: String?
     public let allowsBaseURLOverride: Bool
-    /// 默认轮询间隔（秒）。短窗 provider 更勤：火山 5h 窗 = 120s，余额型 = 300s（DESIGN.md §6）。
+    /// Default poll interval (seconds). Short-window providers poll more often:
+    /// Volcano 5h window = 120s; DeepSeek balance = 180s (3min, trades off consumption
+    /// tracking granularity against fewer requests).
     public let defaultPollInterval: TimeInterval
 
     public init(

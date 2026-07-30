@@ -115,6 +115,12 @@ struct BallView: View {
 
     private var centerTextLayer: some View {
         VStack(spacing: 0) {
+            // Balance: upper (small) = last-5h spend, lower (big) = balance.
+            if model.mode == .balance, let spent = model.spentRecentText {
+                Text(spent)
+                    .font(.system(size: 8, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
             Text(model.centerText)
                 .font(.system(size: model.mode == .balance ? 16 : 15,
                               weight: .semibold, design: .rounded))
