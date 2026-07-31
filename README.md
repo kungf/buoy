@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="TokenRunway Dashboard" width="700">
+  <img src="assets/dashboard.png?v=2" alt="TokenRunway Dashboard" width="700">
 </p>
 
 > An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across all your providers, before you hit empty.

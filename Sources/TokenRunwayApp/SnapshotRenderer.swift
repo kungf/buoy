@@ -46,6 +46,7 @@ enum SnapshotRenderer {
             .background(Color(NSColor.windowBackgroundColor))
         let nsview = NSHostingView(rootView: view)
         nsview.frame = CGRect(x: 0, y: 0, width: 380, height: 460)
+        nsview.appearance = NSAppearance(named: .aqua)
         // Force layout pass so SwiftUI sizes everything before ImageRenderer captures
         nsview.layout()
         let renderer = ImageRenderer(content: view)
