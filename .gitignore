@@ -16,5 +16,6 @@ secrets/
 .playwright-mcp/
 .DS_Store
 
-# 本地 Claude Code 工具产物（计划/会话等，不入仓库）
-.claude/
+# 本地 Claude Code 工具产物（计划/会话等，不入仓库）；skills 例外入库
+.claude/*
+!.claude/skills/
