@@ -103,8 +103,8 @@ struct DashboardView: View {
             get: { settingsProviderId != nil },
             set: { if !$0 { settingsProviderId = nil } }
         )) {
-            if let id = settingsProviderId, let mode = store.providerAuthMode(for: id) {
-                ProviderSettingsView(store: store, providerId: id, authMode: mode)
+            if let id = settingsProviderId, let manifest = store.providerManifest(for: id) {
+                ProviderSettingsView(store: store, manifest: manifest)
             }
         }
     }

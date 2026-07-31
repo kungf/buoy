@@ -5,8 +5,10 @@ import TokenRunwayCore
 /// auth form fields (bearer token or volc AK/SK) and writes to ~/.trwy/config.json.
 struct ProviderSettingsView: View {
     @ObservedObject var store: UsageStore
-    let providerId: String
-    let authMode: AuthMode
+    let manifest: ProviderManifest
+
+    /// Auth mode drives the form shape; sourced from the manifest.
+    private var authMode: AuthMode { manifest.authMode }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -20,14 +22,14 @@ struct ProviderSettingsView: View {
     @State private var showSK = false
 
     private var displayName: String {
-        store.providerDisplayName(for: providerId)
+        store.providerDisplayName(for: manifest.id)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Header
             HStack(spacing: 10) {
-                ProviderTheme.theme(for: providerId).makeImage()
+                ProviderTheme.theme(for: manifest.id).makeImage()
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(height: 18)
@@ -177,7 +179,7 @@ struct ProviderSettingsView: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     step(1, "Open \(displayName) Platform")
-                    Text("https://platform.deepseek.com")
+                    Text(manifest.consoleURL ?? "-")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.blue)
                         .padding(.leading, 20)
@@ -193,7 +195,7 @@ struct ProviderSettingsView: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     step(1, "Open Volcano Ark Console")
-                    Text("https://console.volcengine.com/ark")
+                    Text(manifest.consoleURL ?? "-")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.blue)
                         .padding(.leading, 20)
@@ -234,10 +236,10 @@ struct ProviderSettingsView: View {
         let config = CredentialStore.load()
         switch authMode {
         case .bearer:
-            token = config?.providers[providerId]?.token ?? ""
+            token = config?.providers[manifest.id]?.token ?? ""
         case .volcSignature:
-            ak = config?.providers[providerId]?.ak ?? ""
-            sk = config?.providers[providerId]?.sk ?? ""
+            ak = config?.providers[manifest.id]?.ak ?? ""
+            sk = config?.providers[manifest.id]?.sk ?? ""
         case .consoleSession:
             break
         }
@@ -249,7 +251,7 @@ struct ProviderSettingsView: View {
         let url = CredentialStore.defaultURL
         var config = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
 
-        var entry = config.providers[providerId] ?? ProviderCredentials()
+        var entry = config.providers[manifest.id] ?? ProviderCredentials()
         switch authMode {
         case .bearer:
             entry.auth = "bearer"
@@ -261,7 +263,7 @@ struct ProviderSettingsView: View {
         case .consoleSession:
             break
         }
-        config.providers[providerId] = entry
+        config.providers[manifest.id] = entry
 
         do {
             try CredentialStore.save(config, to: url)

@@ -40,6 +40,12 @@ public enum ProviderError: Error, Sendable, Equatable {
     case unknown(Int)
 }
 
+/// Provider 主题色（Core-safe，不依赖 SwiftUI）。App 层通过扩展映射成 `Color`。
+/// 把颜色身份放进 manifest，避免新增 provider 时还要维护一份并行的 App 主题表。
+public enum ThemeColor: Sendable {
+    case orange, blue, purple, green, red, teal, indigo, pink, gray
+}
+
 public struct ProviderManifest: Sendable, Equatable {
     public let id: String
     public let displayName: String
@@ -50,6 +56,20 @@ public struct ProviderManifest: Sendable, Equatable {
     /// Volcano 5h window = 120s; DeepSeek balance = 180s (3min, trades off consumption
     /// tracking granularity against fewer requests).
     public let defaultPollInterval: TimeInterval
+    /// 球面铭牌短码（如 "ds"/"vol"）。nil -> 按 id 启发式截取。
+    public let shortName: String?
+    /// 控制台/平台 URL，用于设置面板的"如何获取凭证"帮助链接。按 provider 而非 authMode。
+    public let consoleURL: String?
+    /// App bundle 内的 logo 资源名（如 "deepseek_logo"）。nil -> SF Symbol 兜底。
+    public let logoName: String?
+    /// 主题色。
+    public let themeColor: ThemeColor
+    /// trwyctl env 变量前缀覆盖（如火山用 "VOLC" 而非 id "VOLCANO"）。nil -> id 大写。
+    /// 外部契约：改动需同步 README 与用户 shell rc。
+    public let envPrefixOverride: String?
+
+    /// 实际 env 变量前缀，如 "DEEPSEEK" / "VOLC"。
+    public var envPrefix: String { envPrefixOverride ?? id.uppercased() }
 
     public init(
         id: String,
@@ -57,7 +77,12 @@ public struct ProviderManifest: Sendable, Equatable {
         authMode: AuthMode,
         defaultBaseURL: String? = nil,
         allowsBaseURLOverride: Bool = false,
-        defaultPollInterval: TimeInterval = 300
+        defaultPollInterval: TimeInterval = 300,
+        shortName: String? = nil,
+        consoleURL: String? = nil,
+        logoName: String? = nil,
+        themeColor: ThemeColor = .purple,
+        envPrefixOverride: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -65,6 +90,11 @@ public struct ProviderManifest: Sendable, Equatable {
         self.defaultBaseURL = defaultBaseURL
         self.allowsBaseURLOverride = allowsBaseURLOverride
         self.defaultPollInterval = defaultPollInterval
+        self.shortName = shortName
+        self.consoleURL = consoleURL
+        self.logoName = logoName
+        self.themeColor = themeColor
+        self.envPrefixOverride = envPrefixOverride
     }
 }
 

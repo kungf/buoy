@@ -8,7 +8,11 @@ public struct DeepSeekProvider: Provider {
         authMode: .bearer,
         defaultBaseURL: "https://api.deepseek.com",
         allowsBaseURLOverride: true,
-        defaultPollInterval: 180
+        defaultPollInterval: 180,
+        shortName: "ds",
+        consoleURL: "https://platform.deepseek.com",
+        logoName: "deepseek_logo",
+        themeColor: .blue
     )
     public let supportedQuotaTypes: [QuotaType] = [.balance]
 

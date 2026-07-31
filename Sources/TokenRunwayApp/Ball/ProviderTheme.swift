@@ -1,6 +1,9 @@
 import SwiftUI
+import TokenRunwayCore
 
 /// provider 主题（颜色 + 图标）。逃逸徽标着色、详情图标用（DESIGN.md §8.1）。
+/// 颜色与 logo 名都在 `ProviderManifest` 里，这里只是把它们映射成 SwiftUI 类型，
+/// 不再维护并行的 provider 主题表。
 struct ProviderTheme: Equatable {
     let id: String
     let color: Color
@@ -11,17 +14,21 @@ struct ProviderTheme: Equatable {
 }
 
 extension ProviderTheme {
-    /// 已知 provider 主题表；未知 provider 兜底紫色。
-    static let registry: [String: ProviderTheme] = [
-        "volcano": ProviderTheme(id: "volcano", color: .orange, imageName: "volcengine_logo", isSystemImage: false),
-        "deepseek": ProviderTheme(id: "deepseek", color: .blue, imageName: "deepseek_logo", isSystemImage: false),
-    ]
-
+    /// 从 `ProviderRegistry` 取 manifest 派生主题；未知 provider（如旧版残留选择）兜底紫色。
     static func theme(for id: String) -> ProviderTheme {
-        registry[id] ?? ProviderTheme(id: id, color: .purple, imageName: "circle.fill", isSystemImage: true)
+        if let manifest = ProviderRegistry.provider(for: id.lowercased())?.manifest {
+            let logoName = manifest.logoName
+            return ProviderTheme(
+                id: id,
+                color: manifest.themeColor.asColor,
+                imageName: logoName ?? "circle.fill",
+                isSystemImage: logoName == nil
+            )
+        }
+        return ProviderTheme(id: id, color: .purple, imageName: "circle.fill", isSystemImage: true)
     }
 
-    /// Creates the appropriate `Image` — loads from the module bundle for known
+    /// Creates the appropriate `Image` - loads from the module bundle for known
     /// providers, falls back to SF Symbol for unknown providers.
     func makeImage() -> Image {
         if isSystemImage {
@@ -33,17 +40,33 @@ extension ProviderTheme {
         }
     }
 
-    /// Short ASCII code for the ball nameplate, derived from the provider id (locale-independent:
-    /// unaffected by `displayName`, which may be localized). id <= 4 chars -> shown in full;
-    /// longer known ids -> a hand-picked short code; unknown long ids -> first 3 chars. Keeps the
-    /// 88pt ball readable (DESIGN.md §8.3). e.g. "deepseek" -> "ds", "volcano" -> "vol".
+    /// Short ASCII code for the ball nameplate (locale-independent: unaffected by `displayName`,
+    /// which may be localized). Precedence: known provider -> `manifest.shortName`; otherwise
+    /// id <= 4 chars -> shown in full; longer unknown id -> first 3 chars. Keeps the 88pt ball
+    /// readable (DESIGN.md §8.3).
     static func shortName(for id: String) -> String {
         let lower = id.lowercased()
+        if let sn = ProviderRegistry.provider(for: lower)?.manifest.shortName, !sn.isEmpty {
+            return sn
+        }
         if lower.count <= 4 { return lower }
-        switch lower {
-        case "deepseek": return "ds"
-        case "volcano": return "vol"
-        default: return String(lower.prefix(3))
+        return String(lower.prefix(3))
+    }
+}
+
+/// Maps the Core-layer `ThemeColor` to SwiftUI `Color`（Core 不依赖 SwiftUI）。
+extension ThemeColor {
+    var asColor: Color {
+        switch self {
+        case .orange: return .orange
+        case .blue: return .blue
+        case .purple: return .purple
+        case .green: return .green
+        case .red: return .red
+        case .teal: return .teal
+        case .indigo: return .indigo
+        case .pink: return .pink
+        case .gray: return .gray
         }
     }
 }

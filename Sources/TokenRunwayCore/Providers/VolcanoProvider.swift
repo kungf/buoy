@@ -11,7 +11,12 @@ public struct VolcanoProvider: Provider {
         authMode: .volcSignature,
         defaultBaseURL: "https://open.volcengineapi.com",
         allowsBaseURLOverride: true,
-        defaultPollInterval: 120
+        defaultPollInterval: 120,
+        shortName: "vol",
+        consoleURL: "https://console.volcengine.com/ark",
+        logoName: "volcengine_logo",
+        themeColor: .orange,
+        envPrefixOverride: "VOLC"
     )
     public let supportedQuotaTypes: [QuotaType] = [.timeWindowed]
 

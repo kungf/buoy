@@ -1,25 +1,46 @@
 import Foundation
 import TokenRunwayCore
 
-/// trwyctl — 适配器联调 harness。
+/// trwyctl - 适配器联调 harness。
 /// 凭证来源（优先级从高到低；绝不打印、不写盘、不入仓库）：
-///   DeepSeek: env TRWY_DEEPSEEK_TOKEN → ~/.trwy/config.json（CredentialStore）
-///   火山:     env TRWY_VOLC_AK / TRWY_VOLC_SK → ~/.trwy/config.json
-/// 用法: trwyctl deepseek | volcano | all
+///   bearer:        env TRWY_<envPrefix>_TOKEN
+///   volcSignature: env TRWY_<envPrefix>_AK / TRWY_<envPrefix>_SK
+///   -> ~/.trwy/config.json（CredentialStore）
+/// envPrefix 取自 manifest（DeepSeek=DEEPSEEK，火山=VOLC）；用法: trwyctl <id> | all
 
-func credential(for providerId: String, config: TokenRunwayConfigFile?) -> Credential? {
+/// 拼出 env 变量前缀，如 "TRWY_DEEPSEEK_" / "TRWY_VOLC_"。
+private func envVarPrefix(for provider: any Provider) -> String {
+    "TRWY_\(provider.manifest.envPrefix)_"
+}
+
+func envCredential(for provider: any Provider) -> Credential? {
     let env = ProcessInfo.processInfo.environment
-    switch providerId {
-    case "deepseek":
-        if let t = env["TRWY_DEEPSEEK_TOKEN"], !t.isEmpty { return .bearer(t) }
-    case "volcano":
-        if let ak = env["TRWY_VOLC_AK"], let sk = env["TRWY_VOLC_SK"], !ak.isEmpty, !sk.isEmpty {
+    let prefix = envVarPrefix(for: provider)
+    switch provider.manifest.authMode {
+    case .bearer:
+        if let t = env[prefix + "TOKEN"], !t.isEmpty { return .bearer(t) }
+    case .volcSignature:
+        if let ak = env[prefix + "AK"], let sk = env[prefix + "SK"],
+           !ak.isEmpty, !sk.isEmpty {
             return .volcAccessKey(ak: ak, sk: sk)
         }
-    default:
+    case .consoleSession:
         break
     }
-    return CredentialStore.credential(for: providerId, from: config)
+    return nil
+}
+
+func envHint(for provider: any Provider) -> String {
+    let prefix = envVarPrefix(for: provider)
+    switch provider.manifest.authMode {
+    case .bearer: return "env \(prefix)TOKEN"
+    case .volcSignature: return "env \(prefix)AK / \(prefix)SK"
+    case .consoleSession: return "console session"
+    }
+}
+
+func credential(for provider: any Provider, config: TokenRunwayConfigFile?) -> Credential? {
+    envCredential(for: provider) ?? CredentialStore.credential(for: provider.manifest.id, from: config)
 }
 
 func printReport(_ report: ProviderReport) {
@@ -41,28 +62,32 @@ func printReport(_ report: ProviderReport) {
 let arg = CommandLine.arguments.dropFirst().first ?? "all"
 let config = CredentialStore.load()
 
-do {
-    if arg == "deepseek" || arg == "all" {
-        guard let cred = credential(for: "deepseek", config: config) else {
-            print("deepseek: 未找到凭证（env TRWY_DEEPSEEK_TOKEN 或 ~/.trwy/config.json）")
-            exit(1)
-        }
-        print("== DeepSeek ==")
-        printReport(try await DeepSeekProvider().fetchUsage(credential: cred))
-    }
-
-    if arg == "volcano" || arg == "all" {
-        guard let cred = credential(for: "volcano", config: config) else {
-            print("== 火山 ==")
-            print("跳过：缺少 IAM AK/SK（方舟控制台右上角头像 → API 访问密钥 → 新建密钥，")
-            print("      填入 ~/.trwy/config.json 的 providers.volcano.ak/sk 或 env TRWY_VOLC_AK/SK）")
-            if arg == "volcano" { exit(2) }
-            exit(0)
-        }
-        print("== 火山 ==")
-        printReport(try await VolcanoProvider().fetchUsage(credential: cred))
-    }
-} catch {
-    print("ERROR: \(error)")
-    exit(1)
+let targets: [any Provider]
+if arg == "all" {
+    targets = ProviderRegistry.all
+} else if let provider = ProviderRegistry.provider(for: arg) {
+    targets = [provider]
+} else {
+    print("unknown provider: \(arg). Known: \(ProviderRegistry.ids.joined(separator: ", "))")
+    exit(2)
 }
+
+var failed = false
+for provider in targets {
+    print("== \(provider.manifest.displayName) ==")
+    guard let cred = credential(for: provider, config: config) else {
+        // Missing credentials: fatal for a single-provider invocation, non-fatal
+        // (best-effort skip) for `all` - mirrors the original harness semantics.
+        print("跳过：缺少凭证（\(envHint(for: provider)) 或 ~/.trwy/config.json）")
+        if arg != "all" { exit(1) }
+        continue
+    }
+    do {
+        printReport(try await provider.fetchUsage(credential: cred))
+    } catch {
+        print("ERROR: \(error)")
+        failed = true
+    }
+}
+
+if failed { exit(1) }

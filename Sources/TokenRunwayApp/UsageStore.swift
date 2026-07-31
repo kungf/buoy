@@ -33,7 +33,7 @@ final class UsageStore: ObservableObject {
     /// to cache.json.
     private var forecast = ForecastEngine()
 
-    init(providers: [any Provider] = [VolcanoProvider(), DeepSeekProvider()],
+    init(providers: [any Provider] = ProviderRegistry.all,
          preferences: SelectionStorage = Preferences()) {
         self.providerOrder = providers.map { $0.manifest.id }
         self.providers = Dictionary(providers.map { ($0.manifest.id, $0) },
@@ -169,8 +169,8 @@ final class UsageStore: ObservableObject {
 
     /// Auth mode for a provider (drives settings form).
     var knownProviderIds: [String] { providerOrder }
-    func providerAuthMode(for id: String) -> AuthMode? {
-        providers[id]?.manifest.authMode
+    func providerManifest(for id: String) -> ProviderManifest? {
+        providers[id]?.manifest
     }
 
     /// Toggle a provider onto the ball (dashboard eye toggle / right-click "remove from ball").
