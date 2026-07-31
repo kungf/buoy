@@ -43,6 +43,7 @@ enum SnapshotRenderer {
     @MainActor
     private static func renderDashboard(store: UsageStore, to url: URL) {
         let view = SnapshotDashboardView(store: store)
+            .background(Color(NSColor.windowBackgroundColor))
         let nsview = NSHostingView(rootView: view)
         nsview.frame = CGRect(x: 0, y: 0, width: 380, height: 460)
         // Force layout pass so SwiftUI sizes everything before ImageRenderer captures
@@ -82,15 +83,33 @@ enum SnapshotRenderer {
             print("⚠️  Failed to get CGImage")
             return
         }
-        let rep = NSBitmapImageRep(cgImage: cgImage)
-        rep.size = image.size
+        let width = cgImage.width
+        let height = cgImage.height
+        // Composite onto white background so GitHub renders correctly (no transparent black).
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let info = CGImageAlphaInfo.noneSkipLast.rawValue
+        guard let ctx = CGContext(data: nil, width: width, height: height,
+                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: colorSpace, bitmapInfo: info) else {
+            print("⚠️  Failed to create CGContext")
+            return
+        }
+        ctx.setFillColor(CGColor.white)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let flattened = ctx.makeImage() else {
+            print("⚠️  Failed to flatten image")
+            return
+        }
+        let rep = NSBitmapImageRep(cgImage: flattened)
+        rep.size = NSSize(width: width, height: height)
         guard let data = rep.representation(using: .png, properties: [:]) else {
             print("⚠️  Failed to encode PNG")
             return
         }
         do {
             try data.write(to: url)
-            print("   → \(url.lastPathComponent) (\(Int(image.size.width))×\(Int(image.size.height)))")
+            print("   → \(url.lastPathComponent) (\(width)×\(height))")
         } catch {
             print("⚠️  Failed to write \(url.path): \(error)")
         }
