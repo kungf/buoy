@@ -18,7 +18,7 @@
 
 ```sh
 git clone https://github.com/kungf/token-runway.git && cd token-runway
-swift build && TRWY_MOCK=mixed open build/TokenRunway.app
+./Scripts/make-app.sh debug && TRWY_MOCK=mixed open build/TokenRunway.app
 ```
 
 Six mock scenarios to play with: `healthy` · `warning` · `critical` · `exhausted` · `mixed` · `balance-critical`. No API keys, no network — just the real UI with synthetic data. Quit: `pkill -x TokenRunway`.
@@ -51,9 +51,15 @@ Full roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 - **macOS 14.0+** (Sonoma; uses `PhaseAnimator` / `Canvas`)
 - Xcode Command Line Tools (Swift 6.0 toolchain)
 
-## Quick Start
+## Installation
 
-### 1. Build
+### Homebrew
+
+> 🚧 Coming soon - pending Apple notarization and a cask tap. For now, build from source.
+
+### Build from source
+
+**1. Build**
 
 ```sh
 git clone https://github.com/kungf/token-runway.git
@@ -61,7 +67,7 @@ cd token-runway
 swift build
 ```
 
-### 2. Configure credentials
+**2. Configure credentials**
 
 Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitignored, never committed):
 
@@ -76,7 +82,7 @@ Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitig
 
 > **Volcano note**: you need IAM **AccessKey + SecretKey** (console → Access Control IAM → Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
 
-### 3. Verify with the CLI
+**3. Verify with the CLI**
 
 ```sh
 .build/debug/trwyctl all      # fetches deepseek + volcano once, prints quotas
@@ -86,7 +92,7 @@ Credential priority: env vars > `~/.trwy/config.json`:
 - `TRWY_DEEPSEEK_TOKEN`
 - `TRWY_VOLC_AK` / `TRWY_VOLC_SK`
 
-### 4. Package & run
+**4. Package & run**
 
 ```sh
 ./Scripts/make-app.sh         # produces build/TokenRunway.app (LSUIElement background agent)
@@ -94,6 +100,16 @@ open build/TokenRunway.app
 ```
 
 The ball appears at the top-right of the main screen. Use `TRWY_MOCK=critical|warning|exhausted|mixed|healthy open build/TokenRunway.app` for visual testing with mock scenarios (no network). Quit: `pkill -x TokenRunway`.
+
+**Distribution signing** — by default the build is ad-hoc signed (no certificate needed; fine for local use and screenshots). To produce a Developer-ID-signed build for distribution:
+
+```sh
+TRWY_SIGNING=identity \
+TRWY_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+./Scripts/make-app.sh
+```
+
+This enables Hardened Runtime with a network-client entitlement. Notarization and stapling are a separate step (TODO: `Scripts/notarize.sh`) and require an Apple Developer account.
 
 ## Interactions
 
