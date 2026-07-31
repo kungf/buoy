@@ -17,7 +17,8 @@ let package = Package(
         .executableTarget(
             name: "TokenRunwayApp",
             dependencies: ["TokenRunwayCore"],
-            path: "Sources/TokenRunwayApp"
+            path: "Sources/TokenRunwayApp",
+            resources: [.process("Resources")]
         ),
         .executableTarget(
             name: "TokenRunwayCtl",

@@ -33,8 +33,10 @@ private struct ProviderDetailView: View {
         if let report = store.reports.first(where: { $0.providerId == providerId }) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
-                    Image(systemName: ProviderTheme.theme(for: providerId).icon)
-                        .foregroundStyle(ProviderTheme.theme(for: providerId).color)
+                    ProviderTheme.theme(for: providerId).makeImage()
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: 18)
                     Text(store.providerDisplayName(for: providerId))
                         .font(.headline)
                     Spacer()

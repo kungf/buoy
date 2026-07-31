@@ -4,19 +4,33 @@ import SwiftUI
 struct ProviderTheme: Equatable {
     let id: String
     let color: Color
-    /// SF Symbol 名
-    let icon: String
+    /// Bundle resource image name (e.g. "deepseek_logo", "volcengine_logo")
+    let imageName: String
+    /// True when `imageName` is an SF Symbol name rather than a bundled resource.
+    let isSystemImage: Bool
 }
 
 extension ProviderTheme {
     /// 已知 provider 主题表；未知 provider 兜底紫色。
     static let registry: [String: ProviderTheme] = [
-        "volcano": ProviderTheme(id: "volcano", color: .orange, icon: "flame.fill"),
-        "deepseek": ProviderTheme(id: "deepseek", color: .blue, icon: "circle.hexagongrid.fill"),
+        "volcano": ProviderTheme(id: "volcano", color: .orange, imageName: "volcengine_logo", isSystemImage: false),
+        "deepseek": ProviderTheme(id: "deepseek", color: .blue, imageName: "deepseek_logo", isSystemImage: false),
     ]
 
     static func theme(for id: String) -> ProviderTheme {
-        registry[id] ?? ProviderTheme(id: id, color: .purple, icon: "circle.fill")
+        registry[id] ?? ProviderTheme(id: id, color: .purple, imageName: "circle.fill", isSystemImage: true)
+    }
+
+    /// Creates the appropriate `Image` — loads from the module bundle for known
+    /// providers, falls back to SF Symbol for unknown providers.
+    func makeImage() -> Image {
+        if isSystemImage {
+            return Image(systemName: imageName)
+        } else if let nsImage = Bundle.module.image(forResource: imageName) {
+            return Image(nsImage: nsImage)
+        } else {
+            return Image(systemName: "questionmark.circle")
+        }
     }
 
     /// Short ASCII code for the ball nameplate, derived from the provider id (locale-independent:

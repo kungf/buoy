@@ -27,9 +27,10 @@ struct ProviderSettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Header
             HStack(spacing: 10) {
-                Image(systemName: ProviderTheme.theme(for: providerId).icon)
-                    .foregroundStyle(ProviderTheme.theme(for: providerId).color)
-                    .font(.title3)
+                ProviderTheme.theme(for: providerId).makeImage()
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 18)
                 Text("Configure \(displayName)")
                     .font(.headline)
                 Spacer()

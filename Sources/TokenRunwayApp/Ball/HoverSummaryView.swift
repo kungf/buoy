@@ -45,14 +45,10 @@ struct HoverSummaryView: View {
 
     private var headerView: some View {
         HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(theme.color.opacity(0.12))
-                    .frame(width: 26, height: 26)
-                Image(systemName: theme.icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(theme.color)
-            }
+            theme.makeImage()
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(height: 16)
 
             Text(store.providerDisplayName(for: providerId))
                 .font(.system(size: 12, weight: .semibold))
