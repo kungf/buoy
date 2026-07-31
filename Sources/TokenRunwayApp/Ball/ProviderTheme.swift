@@ -28,12 +28,14 @@ extension ProviderTheme {
         return ProviderTheme(id: id, color: .purple, imageName: "circle.fill", isSystemImage: true)
     }
 
-    /// Creates the appropriate `Image` - loads from the module bundle for known
-    /// providers, falls back to SF Symbol for unknown providers.
+    /// Creates the appropriate `Image` - loads from the app's main bundle
+    /// (`Contents/Resources`) for known providers, falls back to SF Symbol
+    /// for unknown providers or when the resource is absent (e.g. running
+    /// the raw executable without a packaged `.app`).
     func makeImage() -> Image {
         if isSystemImage {
             return Image(systemName: imageName)
-        } else if let nsImage = Bundle.module.image(forResource: imageName) {
+        } else if let nsImage = Bundle.main.image(forResource: imageName) {
             return Image(nsImage: nsImage)
         } else {
             return Image(systemName: "questionmark.circle")
