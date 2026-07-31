@@ -14,17 +14,6 @@
 
 ---
 
-## Try it now (10 seconds, no credentials)
-
-```sh
-git clone https://github.com/kungf/token-runway.git && cd token-runway
-./Scripts/make-app.sh debug && TRWY_MOCK=mixed open build/TokenRunway.app
-```
-
-Six mock scenarios to play with: `healthy` · `warning` · `critical` · `exhausted` · `mixed` · `balance-critical`. No API keys, no network — just the real UI with synthetic data. Quit: `pkill -x TokenRunway`.
-
----
-
 ## Why
 
 - **Glanceable**: see consumption at a glance, without switching away from your work or opening a browser.
@@ -99,7 +88,15 @@ Credential priority: env vars > `~/.trwy/config.json`:
 open build/TokenRunway.app
 ```
 
-The ball appears at the top-right of the main screen. Use `TRWY_MOCK=critical|warning|exhausted|mixed|healthy open build/TokenRunway.app` for visual testing with mock scenarios (no network). Quit: `pkill -x TokenRunway`.
+The ball appears at the top-right of the main screen. Quit: `pkill -x TokenRunway`.
+
+**Preview without credentials** - run the real UI with synthetic data, no API keys or network:
+
+```sh
+TRWY_MOCK=mixed open build/TokenRunway.app
+```
+
+Six scenarios to try: `healthy` · `warning` · `critical` · `exhausted` · `mixed` · `balance-critical`.
 
 **Distribution signing** — by default the build is ad-hoc signed (no certificate needed; fine for local use and screenshots). To produce a Developer-ID-signed build for distribution:
 
