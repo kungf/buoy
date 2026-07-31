@@ -1,23 +1,34 @@
 # TokenRunway 🛬
 
-> An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across providers, before you hit empty.
+[![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift)](https://swift.org)
+[![macOS](https://img.shields.io/badge/macOS-14.0%2B-005F9E?logo=apple)](https://apple.com/macos)
+[![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
-"Runway" is the startup word for "how long can you keep burning at this rate before you're out." **TokenRunway** puts that number on your desktop as a floating ball: outer ring = monthly remaining, core liquid = current-window remaining, breathing rate = burn rate. When the ball starts breathing hard and flashing red, your 5-hour quota is 10 minutes away from empty. You knew before it happened.
+<p align="center">
+  <img src="assets/dashboard.png" alt="TokenRunway Dashboard" width="700">
+</p>
 
-> Formerly known as `Buoy` — same product, sharper name.
+> An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across all your providers, before you hit empty.
 
+"Runway" is the startup word for "how long can you keep burning at this rate before you're out." **TokenRunway** puts that number on your desktop as a floating ball. The outer ring shows your monthly remaining; the core liquid shows your current-window remaining; the ball's breathing rate mirrors your actual burn rate. When it starts breathing hard and flashing red, your 5-hour quota is 10 minutes from empty. You knew before it happened.
+
+---
+
+## Try it now (10 seconds, no credentials)
+
+```sh
+git clone https://github.com/kungf/token-runway.git && cd token-runway
+swift build && TRWY_MOCK=mixed open build/TokenRunway.app
 ```
-        ╭───╮
-        │ ◯ │   outer ring = monthly remaining    core liquid = current window remaining
-        ╰───╯   breathing rate ↔ burn rate (the faster you burn, the faster it breathes)
-```
+
+Six mock scenarios to play with: `healthy` · `warning` · `critical` · `exhausted` · `mixed` · `balance-critical`. No API keys, no network — just the real UI with synthetic data. Quit: `pkill -x TokenRunway`.
 
 ---
 
 ## Why
 
 - **Glanceable**: see consumption at a glance, without switching away from your work or opening a browser.
-- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance) -- rendered homogeneously; click for a full dashboard across all providers.
+- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance) — rendered homogeneously; click for a full dashboard across all providers.
 - **Prediction over reporting**: computes ETA from burn rate ("at the current pace, your 5h quota has 12 minutes left"), attacking the pain of "my 5-hour quota burned out in 10 minutes before I noticed."
 - **Low-overhead resident**: native SwiftUI + AppKit, tiny resident memory and CPU; never steals focus.
 
@@ -63,7 +74,7 @@ Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitig
 }
 ```
 
-> **Volcano note**: you need IAM **AccessKey + SecretKey** (console -> Access Control IAM -> Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
+> **Volcano note**: you need IAM **AccessKey + SecretKey** (console → Access Control IAM → Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
 
 ### 3. Verify with the CLI
 
@@ -83,18 +94,6 @@ open build/TokenRunway.app
 ```
 
 The ball appears at the top-right of the main screen. Use `TRWY_MOCK=critical|warning|exhausted|mixed|healthy open build/TokenRunway.app` for visual testing with mock scenarios (no network). Quit: `pkill -x TokenRunway`.
-
-### Migrating from Buoy
-
-If you had the older `Buoy.app` installed, migration is one command:
-
-```sh
-mv ~/.buoy ~/.trwy 2>/dev/null || true       # config + cache
-pkill -x Buoy 2>/dev/null; rm -rf /Applications/Buoy.app build/Buoy.app 2>/dev/null || true
-# rename env vars in your shell rc: BUOY_* → TRWY_*
-```
-
-UserDefaults keys also moved (`buoy.selectedProviderIds` → `tokenrunway.selectedProviderIds`, same for `.ballPositions`); previous ball positions and provider selection will reset once.
 
 ## Interactions
 
@@ -121,23 +120,23 @@ Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
 
 Four SPM targets:
-- **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) -- model / auth / forecast / providers / networking
-- **TokenRunwayApp** -- floating ball + dashboard UI
-- **trwyctl** -- adapter integration CLI
-- **TokenRunwayCoreTests** -- unit tests (33/33)
+- **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) — model / auth / forecast / providers / networking
+- **TokenRunwayApp** — floating ball + dashboard UI
+- **trwyctl** — adapter integration CLI
+- **TokenRunwayCoreTests** — unit tests (33/33)
 
 ## Security
 
 - API keys live only in `~/.trwy/config.json` (chmod 600, outside the repo); **never committed, never logged, never sent to third parties** (M2 will migrate to Keychain).
-- `Credential` implements a redacting `CustomStringConvertible` -- any `print()` shows only the first 4 characters.
+- `Credential` implements a redacting `CustomStringConvertible` — any `print()` shows only the first 4 characters.
 - Network is HTTPS-only (ATS + certificate validation).
 
 ## Documentation
 
-- [`docs/DESIGN.md`](docs/DESIGN.md) -- full design doc (philosophy / architecture / provider specs / UI / milestones) -- in Chinese
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) -- roadmap and gap checklist -- in Chinese
-- [`docs/M0-ACCEPTANCE.md`](docs/M0-ACCEPTANCE.md) -- M0 acceptance report -- in Chinese
+- [`docs/DESIGN.md`](docs/DESIGN.md) — full design doc (philosophy / architecture / provider specs / UI / milestones) — in Chinese
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — roadmap and gap checklist — in Chinese
+- [`docs/M0-ACCEPTANCE.md`](docs/M0-ACCEPTANCE.md) — M0 acceptance report — in Chinese
 
 ## License
 
-TBD (pre-release).
+MIT — see [LICENSE](LICENSE).
