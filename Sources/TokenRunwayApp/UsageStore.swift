@@ -101,7 +101,14 @@ final class UsageStore: ObservableObject {
     /// (drives backoff, DESIGN.md §6).
     private func fetchOne(_ id: String) async {
         guard let provider = providers[id] else { return }
-        guard let credential = CredentialStore.credential(for: id, from: CredentialStore.load()) else {
+        // localCLI 模式不读 ~/.trwy/config.json，直接指向本机 CLI 登录态目录
+        let credential: Credential?
+        if provider.manifest.authMode == .localCLI {
+            credential = CredentialStore.localCLICredential()
+        } else {
+            credential = CredentialStore.credential(for: id, from: CredentialStore.load())
+        }
+        guard let credential else {
             providerErrors[id] = Self.notConfiguredError
             return
         }

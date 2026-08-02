@@ -17,7 +17,7 @@
 ## Why
 
 - **Glanceable**: see consumption at a glance, without switching away from your work or opening a browser.
-- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance) — rendered homogeneously; click for a full dashboard across all providers.
+- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance), Kimi Code (weekly quota + rolling rate windows) — rendered homogeneously; click for a full dashboard across all providers.
 - **Prediction over reporting**: computes ETA from burn rate ("at the current pace, your 5h quota has 12 minutes left"), attacking the pain of "my 5-hour quota burned out in 10 minutes before I noticed."
 - **Low-overhead resident**: native SwiftUI + AppKit, tiny resident memory and CPU; never steals focus.
 
@@ -29,7 +29,7 @@
 |---|---|
 | Floating ball (outer ring + core liquid + breathing/wave animation) | Keychain credential storage (currently config.json) |
 | Dashboard accordion + ETA + sparkline | Alert notifications (AlertEngine + UserNotifications) |
-| DeepSeek + Volcano providers (real-verified) | Settings UI, menu bar, launch-at-login |
+| DeepSeek + Volcano + Kimi Code providers (real-verified) | Settings UI, menu bar, launch-at-login |
 | Burn rate / ETA wired to ball breathing & dashboard | MiMo / OpenAI / Anthropic, sandbox & signing |
 | Volc Signature V4 signing + unified Quota model | (per-provider polling, backoff & persistence ✅) |
 
@@ -70,11 +70,13 @@ Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitig
 ```
 
 > **Volcano note**: you need IAM **AccessKey + SecretKey** (console → Access Control IAM → Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
+>
+> **Kimi Code note**: zero configuration — it reuses the local Kimi Code CLI login (`~/.kimi-code/credentials/kimi-code.json`, or `$KIMI_CODE_HOME`). If you haven't logged in, run `kimi` and execute `/login` first. Nothing is stored in `~/.trwy/config.json` for this provider.
 
 **3. Verify with the CLI**
 
 ```sh
-.build/debug/trwyctl all      # fetches deepseek + volcano once, prints quotas
+.build/debug/trwyctl all      # fetches deepseek + volcano + kimi once, prints quotas
 ```
 
 Credential priority: env vars > `~/.trwy/config.json`:
@@ -127,7 +129,7 @@ UI           FloatingBall (NSPanel) · Dashboard (accordion) · [Settings WIP]
               │ subscribes @Published
 Service      UsageStore (ObservableObject) · ForecastEngine (burn rate/ETA)
               │ scheduling                    │ credentials
-Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · [MiMo/OpenAI/Anthropic WIP]
+Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · [MiMo/OpenAI/Anthropic WIP]
               │
 Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```

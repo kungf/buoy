@@ -140,6 +140,7 @@ struct ProviderReport {
 |---|---|---|---|
 | 火山 Volcano | 4 个 timeWindowed（5h / 1d / 7d / 30d，via GetAFPUsage） | AK/SK 签名 | 轮播 5h/7d/30d |
 | DeepSeek | 1 个 balance | 账户余额 | 有钱就能用 |
+| Kimi Code | 1 个 timeWindowed（7d 每周配额）+ N 个 timeWindowed（滚动限流窗，如 300m）+ 可选 balance（加油包，仅 STATUS_ENABLED） | localCLI（本机 CLI OAuth 登录态） | 零配置，复用 `kimi` CLI 登录 |
 | MiMo | 1 个 timeWindowed（月度） | 自然月 or 30 天滚动（待核实） | 单环 |
 | OpenAI | timeWindowed（计费周期）+ balance（grant） | 花费 + 额度 | 可选 rateLimit |
 | Anthropic | timeWindowed（计费周期）+ per-day usage | 花费 + 用量 | - |
@@ -156,6 +157,7 @@ enum AuthMode {
     case bearer            // { baseURL, apiToken }：Bearer 直连（DeepSeek / OpenAI / Anthropic）
     case volcSignature     // { baseURL, accessKey, secretKey }：Volc Signature V4 HMAC（火山）
     case consoleSession    // 控制台浏览器登录态：经内嵌 WKWebView（无 API 的 provider 兜底）
+    case localCLI          // 本机 CLI OAuth 登录态：读 CLI 凭证文件（Kimi Code），无需用户配置
 }
 
 /// console 模式取数规格（每个控制台一份，内置；用户不可见）
@@ -285,7 +287,29 @@ enum ProviderError: Error {
 - 球面轮播主显 `5h / 7d / 30d`；日窗口进详情面板。
 - **燃烧率 / ETA**：每 ~2 min 轮询快照，用相邻 `Used` 差值算燃烧率，`remaining = Quota − Used`，`ETA = remaining / 燃烧率` -> 完美支撑"5h 额度 10 分钟烧完"预警。
 
-### 5.3 后续 provider（M3）
+### 5.3 Kimi Code ✅ 确定（localCLI 模式，零配置）
+
+无管控面 OpenAPI 也不需要用户手填 token：**复用本机 Kimi Code CLI 的 OAuth 登录态**（与 CLI 共用同一凭证文件）。
+
+| 项 | 值 |
+|---|---|
+| AuthMode | `localCLI`（新增第四种鉴权模式：读本机 CLI 凭证文件，无需用户配置） |
+| 凭证文件 | `$KIMI_CODE_HOME/credentials/kimi-code.json`（默认 `~/.kimi-code`），含 `access_token` / `refresh_token` / `expires_at` |
+| 用量 Endpoint | `GET https://api.kimi.com/coding/v1/usages`，`Authorization: Bearer <access_token>` |
+| 刷新 Endpoint | `POST https://auth.kimi.com/api/oauth/token`（form-urlencoded `grant_type=refresh_token`；有 `~/.kimi-code/device_id` 时带 `X-Msh-Device-Id` header） |
+| 配额详情页 | `https://www.kimi.com/membership/subscription?tab=quota` |
+
+- **Token 生命周期**：access_token 仅 15 分钟有效。`expires_at > now + 60s` 直接用；否则刷新并**原子写回**（tmp + rename，chmod 0600，保留 `scope` / `token_type` 等未知字段；`refresh_token` 轮换时随响应更新）。
+- **多进程协调**（与 CLI 协议一致）：刷新前重读一次凭证文件，若 `refresh_token` 已被外部轮换（CLI 刚刷新过），直接用文件里的新 access_token，放弃本次刷新。
+- **未登录**：凭证文件不存在或刷新返回 401/403/`invalid_grant` -> `unauthorized`，提示用户运行 `kimi` 并执行 `/login`。
+- **Quota 映射**（响应数值均为字符串数字，`resetTime` 为带小数秒的 ISO8601）：
+  - `kimi.7d` ← `usage`：**每周配额**（7 天窗口），数值为**百分比**（limit 恒为 100），`windowStart = resetTime − 7d`
+  - `kimi.rate.<duration><unit>` ← `limits[]`：滚动限流窗（如 300 分钟 = 5 小时窗，`kimi.rate.300m`），支持 `TIME_UNIT_MINUTE/HOUR/DAY/WEEK`，`windowStart = detail.resetTime − 窗口时长`
+  - `kimi.booster` ← `boosterWallet`：加油包，**仅 `STATUS_ENABLED`** 时映射为 `balance`（unit `.cny`，`priceInCents` 为分）；disabled / 缺省 / 数值缺失均跳过，不硬编
+- **轮询**：默认 300s（token 15 分钟有效期，不宜更密）。
+- 实现：`Providers/KimiProvider.swift`（适配器）+ `Auth/KimiCLICredentialStore.swift`（凭证读取/刷新/写回，HTTPClient 可注入，单测覆盖）。
+
+### 5.4 后续 provider（M3）
 MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 / 计费 API），MiMo 视情况 consoleSession。
 
 ---

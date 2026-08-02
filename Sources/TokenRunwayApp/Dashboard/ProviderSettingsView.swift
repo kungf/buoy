@@ -50,6 +50,8 @@ struct ProviderSettingsView: View {
                 Text("Browser-based auth is configured via the console.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            case .localCLI:
+                localCLIFields
             }
 
             // Error
@@ -151,6 +153,23 @@ struct ProviderSettingsView: View {
         }
     }
 
+    // MARK: - localCLI (Kimi Code)：无需输入，自动复用本机 CLI 登录态
+
+    private var localCLIFields: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("No token needed — \(displayName) automatically reuses the local Kimi Code CLI login (~/.kimi-code).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 4) {
+                Text("Not logged in? Run `kimi` and execute /login first.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                helpButton
+            }
+        }
+    }
+
     // MARK: - Help
 
     private var helpButton: some View {
@@ -207,6 +226,20 @@ struct ProviderSettingsView: View {
             }
         case .consoleSession:
             EmptyView()
+        case .localCLI:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("How \(displayName) auth works")
+                    .font(.subheadline.weight(.semibold))
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    step(1, "Install and run the `kimi` CLI on this Mac")
+                    step(2, "Inside the CLI, run /login and finish sign-in")
+                    step(3, "Come back — no token input is needed here")
+                }
+                Text("Quota details: \(manifest.consoleURL ?? "-")")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -229,6 +262,7 @@ struct ProviderSettingsView: View {
         case .volcSignature: return !ak.trimmingCharacters(in: .whitespaces).isEmpty
             && !sk.trimmingCharacters(in: .whitespaces).isEmpty
         case .consoleSession: return false
+        case .localCLI: return false   // 无需填写，直接关闭即可
         }
     }
 
@@ -240,7 +274,7 @@ struct ProviderSettingsView: View {
         case .volcSignature:
             ak = config?.providers[manifest.id]?.ak ?? ""
             sk = config?.providers[manifest.id]?.sk ?? ""
-        case .consoleSession:
+        case .consoleSession, .localCLI:
             break
         }
     }
@@ -262,6 +296,8 @@ struct ProviderSettingsView: View {
             entry.sk = sk.trimmingCharacters(in: .whitespaces)
         case .consoleSession:
             break
+        case .localCLI:
+            break   // 不写 config.json：登录态在本机 CLI 凭证文件里
         }
         config.providers[manifest.id] = entry
 

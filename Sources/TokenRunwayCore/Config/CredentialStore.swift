@@ -64,4 +64,10 @@ public enum CredentialStore {
         }
         return nil
     }
+
+    /// localCLI 模式：不读 ~/.trwy/config.json，凭证指向本机 CLI 的 OAuth 登录态目录
+    ///（KIMI_CODE_HOME 或 ~/.kimi-code），由适配器读取/刷新。
+    public static func localCLICredential(home: URL = KimiCLICredentialStore.defaultHome) -> Credential {
+        .localOAuth(home: home.path)
+    }
 }
