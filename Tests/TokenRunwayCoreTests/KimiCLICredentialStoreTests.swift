@@ -73,6 +73,70 @@ final class KimiCLICredentialStoreTests: XCTestCase {
         XCTAssertEqual(callCount, 0, "fresh token must not trigger a refresh")
     }
 
+    /// form 编码：严格 RFC 3986 unreserved 白名单，含 + / & = 的 token 编码后能还原
+    ///（CharacterSet.urlQueryAllowed 会放行 + 和 &，不能用）
+    func testFormEncodeEscapesSpecialCharacters() {
+        let raw = "tok+with/slash&and=eq~ok-._9"
+        let encoded = KimiCLICredentialStore.formEncode(raw)
+        XCTAssertEqual(encoded, "tok%2Bwith%2Fslash%26and%3Deq~ok-._9")
+        XCTAssertEqual(encoded.removingPercentEncoding, raw)
+    }
+
+    /// 刷新 body：特殊字符 refresh_token 编码后，按 form-urlencoded 规则解析能还原，
+    /// 且不会被 `&` 切出多余参数
+    func testRefreshBodyEncodesSpecialCharactersInToken() async throws {
+        let now = Date()
+        let nasty = "tok+with/slash&and=eq"
+        try writeCredentials(expiresAt: now.timeIntervalSince1970 - 10, refreshToken: nasty)
+        let refreshBody = #"{"access_token":"new-access","expires_in":900}"#
+        let http = StubHTTPClient(responses: [HTTPResponse(status: 200, data: Data(refreshBody.utf8))])
+        let store = KimiCLICredentialStore(home: home, http: http)
+
+        _ = try await store.accessToken(now: now)
+        let requests = await http.requests
+
+        let request = try XCTUnwrap(requests.first)
+        let body = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains("refresh_token=tok%2Bwith%2Fslash%26and%3Deq"), body)
+        // 模拟服务端 form 解析：& 拆分 + percent-decode，必须还原原值
+        var params: [String: String] = [:]
+        for pair in body.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            params[String(kv[0])] = kv.count > 1 ? (String(kv[1]).removingPercentEncoding ?? "") : ""
+        }
+        XCTAssertEqual(params.count, 3, "an unescaped & would split out extra params: \(body)")
+        XCTAssertEqual(params["refresh_token"], nasty)
+    }
+
+    /// expires_at 为字符串数字（"1900000000"）：与 NSNumber 同等处理，新鲜时不触发刷新
+    func testStringExpiresAtAccepted() async throws {
+        let now = Date()
+        try writeCredentials(expiresAt: 0, extra: ["expires_at": String(Int(now.timeIntervalSince1970 + 600))])
+        let http = StubHTTPClient()
+        let store = KimiCLICredentialStore(home: home, http: http)
+
+        let token = try await store.accessToken(now: now)
+        let callCount = await http.callCount
+
+        XCTAssertEqual(token, "old-access")
+        XCTAssertEqual(callCount, 0, "string expires_at must be honored as a valid timestamp")
+    }
+
+    /// expires_at 无法解析（非数字字符串）：视为已过期走刷新路径，而不是误报 malformed
+    func testUnparsableExpiresAtTreatedAsExpired() async throws {
+        let now = Date()
+        try writeCredentials(expiresAt: 0, extra: ["expires_at": "soon"])
+        let refreshBody = #"{"access_token":"new-access","expires_in":900}"#
+        let http = StubHTTPClient(responses: [HTTPResponse(status: 200, data: Data(refreshBody.utf8))])
+        let store = KimiCLICredentialStore(home: home, http: http)
+
+        let token = try await store.accessToken(now: now)
+        let callCount = await http.callCount
+
+        XCTAssertEqual(token, "new-access")
+        XCTAssertEqual(callCount, 1, "unparsable expires_at must fall into the refresh path, not malformed")
+    }
+
     /// token 过期：触发刷新并原子写回（保留 scope/token_type 等字段，0600 权限）
     func testExpiredTokenRefreshesAndWritesBack() async throws {
         let now = Date()
@@ -154,6 +218,20 @@ final class KimiCLICredentialStoreTests: XCTestCase {
     func testMissingFileThrowsUnauthorized() async throws {
         let store = KimiCLICredentialStore(home: home, http: StubHTTPClient())
         await assertThrowsUnauthorized { try await store.accessToken() }
+    }
+
+    /// localCLICredential：文件不存在返回 nil（上层映射 not-configured，走齿轮引导设置页）；
+    /// 文件存在即返回 .localOAuth——哪怕 token 已过期（刷新是适配器的职责，不能误判成未配置）
+    func testLocalCLICredentialNilOnlyWhenFileMissing() throws {
+        XCTAssertNil(CredentialStore.localCLICredential(home: home),
+                     "missing credentials file must map to not-configured")
+        try writeCredentials(expiresAt: 1)   // 已过期也必须照常返回凭证
+        let credential = try XCTUnwrap(CredentialStore.localCLICredential(home: home),
+                                       "expired-but-present file is the normal refresh path")
+        guard case .localOAuth(let path) = credential else {
+            return XCTFail("expected localOAuth, got \(credential)")
+        }
+        XCTAssertEqual(path, home.path)
     }
 
     /// 刷新被拒（401/403/invalid_grant）-> unauthorized

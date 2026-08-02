@@ -208,4 +208,84 @@ final class ProviderParsingTests: XCTestCase {
             XCTAssertFalse(msg.contains("internal token detail"), "must not leak server free text: \(msg)")
         }
     }
+
+    /// resetTime 不带小数秒：兜底 formatter 解析（.withFractionalSeconds 会把小数秒变成必需）
+    func testKimiParsesResetTimeWithoutFractionalSeconds() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09Z"},
+          "limits": []
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d"])
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 8; comps.day = 7
+        comps.hour = 5; comps.minute = 45; comps.second = 9
+        comps.timeZone = TimeZone(identifier: "UTC")
+        let expected = Calendar(identifier: .gregorian).date(from: comps)!
+        XCTAssertEqual(report.quotas[0].resetsAt!.timeIntervalSince1970,
+                       expected.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// usage 存在但全部字段非法：抛 parse 错误，让响应结构变更大声暴露（而非静默空 report）
+    func testKimiThrowsWhenUsagePresentButNothingParsed() {
+        // Arrange
+        let json = """
+        {"usage": {"limit": "abc", "used": "??", "remaining": "49", "resetTime": "not-a-date"}, "limits": []}
+        """.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try KimiProvider.parse(data: json)) { error in
+            guard case ProviderError.parse = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+        }
+    }
+
+    /// USD 加油包：按 currency 映射为 .usd，不假定 CNY
+    func testKimiParsesUSDBoosterWallet() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": [],
+          "boosterWallet": {"status": "STATUS_ENABLED", "monthlyChargeLimit": {"currency": "USD", "priceInCents": "10000"}, "monthlyUsed": {"currency": "USD", "priceInCents": "2500"}}
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d", "kimi.booster"])
+        let booster = report.quotas[1]
+        XCTAssertEqual(booster.unit, .usd)
+        XCTAssertEqual(booster.limit, 100)
+        XCTAssertEqual(booster.used, 25)
+        XCTAssertEqual(booster.effectiveRemaining, 75)
+    }
+
+    /// 未知币种的加油包：跳过该 quota（不假定 CNY），其余 quota 不受影响
+    func testKimiSkipsBoosterWalletWithUnknownCurrency() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": [],
+          "boosterWallet": {"status": "STATUS_ENABLED", "monthlyChargeLimit": {"currency": "EUR", "priceInCents": "10000"}, "monthlyUsed": {"currency": "EUR", "priceInCents": "0"}}
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d"])
+    }
 }

@@ -11,7 +11,7 @@ public struct KimiProvider: Provider {
         defaultBaseURL: "https://api.kimi.com",
         allowsBaseURLOverride: false,
         defaultPollInterval: 300,
-        shortName: "kc",
+        shortName: "km",
         consoleURL: "https://www.kimi.com/membership/subscription?tab=quota",
         logoName: "kimi_logo",
         themeColor: .indigo
@@ -88,6 +88,24 @@ public struct KimiProvider: Provider {
         return f
     }
 
+    /// 不带小数秒的兜底 formatter：.withFractionalSeconds 会把小数秒变成必需，
+    /// 服务端若返回 "2026-08-07T05:45:09Z" 主 formatter 会解析失败，用本 formatter 兜底
+    static func makeISO8601NoFraction() -> ISO8601DateFormatter {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }
+
+    /// 加油包币种 -> 计量单位（参考 DeepSeekProvider 按 currency 选 .cny/.usd）。
+    /// 未知币种返回 nil -> 该 quota 跳过，不假定 CNY。
+    static func boosterUnit(currency: String?) -> Unit? {
+        switch currency {
+        case "CNY": return .cny
+        case "USD": return .usd
+        default: return nil
+        }
+    }
+
     /// TIME_UNIT_MINUTE/HOUR/DAY/WEEK -> 秒数；未知单位返回 nil（跳过该窗口）
     static func windowSeconds(duration: Int, timeUnit: String) -> TimeInterval? {
         switch timeUnit {
@@ -136,13 +154,17 @@ public struct KimiProvider: Provider {
             throw ProviderError.parse("kimi: \(error.localizedDescription)")
         }
         let iso = makeISO8601()
+        let isoNoFraction = makeISO8601NoFraction()
+        func parseDate(_ string: String) -> Date? {
+            iso.date(from: string) ?? isoNoFraction.date(from: string)
+        }
         var quotas: [Quota] = []
 
         // usage = 每周配额（7 天窗口；数值为百分比，limit 恒为 100，unit 记 .credits）
         if let usage = decoded.usage,
            let limit = Double(usage.limit), limit > 0,
            let used = Double(usage.used),
-           let reset = iso.date(from: usage.resetTime) {
+           let reset = parseDate(usage.resetTime) {
             quotas.append(Quota(
                 id: "kimi.7d",
                 type: .timeWindowed,
@@ -161,7 +183,7 @@ public struct KimiProvider: Provider {
             guard let seconds = windowSeconds(duration: entry.window.duration, timeUnit: entry.window.timeUnit),
                   let limit = Double(entry.detail.limit), limit > 0,
                   let used = Double(entry.detail.used),
-                  let reset = iso.date(from: entry.detail.resetTime) else { continue }
+                  let reset = parseDate(entry.detail.resetTime) else { continue }
             quotas.append(Quota(
                 id: "kimi.rate.\(entry.window.duration)\(windowIDSuffix(timeUnit: entry.window.timeUnit))",
                 type: .timeWindowed,
@@ -175,21 +197,29 @@ public struct KimiProvider: Provider {
             ))
         }
 
-        // boosterWallet = 加油包余额；仅 STATUS_ENABLED 时映射为 balance 型（CNY，priceInCents 为分）。
-        // 拿不到数值就跳过，不硬编。
+        // boosterWallet = 加油包余额；仅 STATUS_ENABLED 时映射为 balance 型（priceInCents 为分）。
+        // 币种按 currency 选 .cny/.usd（参考 DeepSeekProvider）；未知币种 / 拿不到数值就跳过，不硬编。
         if let wallet = decoded.boosterWallet, wallet.status == "STATUS_ENABLED",
            let chargeLimit = wallet.monthlyChargeLimit,
-           let limitCents = Double(chargeLimit.priceInCents) {
+           let limitCents = Double(chargeLimit.priceInCents),
+           let unit = boosterUnit(currency: chargeLimit.currency) {
             let usedCents = wallet.monthlyUsed.flatMap { Double($0.priceInCents) }
             quotas.append(Quota(
                 id: "kimi.booster",
                 type: .balance,
                 label: "加油包",
-                unit: .cny,
+                unit: unit,
                 used: usedCents.map { $0 / 100 },
                 limit: limitCents / 100,
                 remaining: usedCents.map { (limitCents - $0) / 100 }
             ))
+        }
+
+        // usage 字段存在却一个 quota 都没产出 = 响应结构已变更——大声抛错暴露，
+        // 而不是静默返回空 report（会让 UI 看起来正常但什么都不显示）。
+        // 仅当 usage != nil 时判定：本来就不返回 usage 的响应不误伤。
+        if decoded.usage != nil && quotas.isEmpty {
+            throw ProviderError.parse("kimi: usage present but no quotas parsed")
         }
 
         return ProviderReport(providerId: "kimi", fetchedAt: now, quotas: quotas)

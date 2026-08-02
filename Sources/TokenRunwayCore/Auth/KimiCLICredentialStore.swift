@@ -11,6 +11,19 @@ public struct KimiCLICredentialStore: Sendable {
     /// 新鲜度余量：过期前 60s 即视为过期，避免请求在飞行中过期
     public static let freshnessSkew: TimeInterval = 60
 
+    /// RFC 3986 unreserved 严格白名单（A-Z a-z 0-9 -._~），用于 form-urlencoded body。
+    /// 不用 CharacterSet.urlQueryAllowed：它放行 `+` 和 `&`，会静默破坏 form body
+    ///（`+` 解码成空格、`&` 切出多余参数）。
+    static let formUnreserved: CharacterSet = {
+        var set = CharacterSet()
+        set.insert(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return set
+    }()
+
+    static func formEncode(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: formUnreserved) ?? value
+    }
+
     /// KIMI_CODE_HOME 环境变量优先，缺省 ~/.kimi-code
     public static var defaultHome: URL {
         if let dir = ProcessInfo.processInfo.environment["KIMI_CODE_HOME"], !dir.isEmpty {
@@ -70,17 +83,30 @@ public struct KimiCLICredentialStore: Sendable {
         }
         guard let fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let accessToken = fields["access_token"] as? String,
-              let refreshToken = fields["refresh_token"] as? String,
-              let expiresAt = (fields["expires_at"] as? NSNumber)?.doubleValue else {
+              let refreshToken = fields["refresh_token"] as? String else {
             throw ProviderError.parse("kimi: malformed credentials file")
+        }
+        // expires_at 由外部工具写入，兼容 NSNumber 与字符串数字（如 "1900000000"）；
+        // 两种都解析不出时视为已过期（0），交给刷新路径判定，而不是误报"文件损坏"
+        // 诱导用户删掉一个可能持有有效登录态的文件。
+        let expiresAt: TimeInterval
+        if let number = (fields["expires_at"] as? NSNumber)?.doubleValue {
+            expiresAt = number
+        } else if let string = fields["expires_at"] as? String, let value = Double(string) {
+            expiresAt = value
+        } else {
+            expiresAt = 0
         }
         return Snapshot(fields: fields, accessToken: accessToken,
                         refreshToken: refreshToken, expiresAt: expiresAt)
     }
 
-    /// 原子写回（tmp + rename，chmod 0600；与 CredentialStore.save 同款模式）
+    /// 原子写回（Data.write options: .atomic，chmod 0600；与 CredentialStore.save 同款模式）。
+    /// credentials/ 目录不存在时先创建（正常流程它必然存在，防御 mkpath 消除边角失败）。
     private func writeSnapshot(_ fields: [String: Any]) throws {
         let data = try JSONSerialization.data(withJSONObject: fields)
+        try FileManager.default.createDirectory(at: credentialsURL.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
         try data.write(to: credentialsURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credentialsURL.path)
     }
@@ -97,7 +123,7 @@ public struct KimiCLICredentialStore: Sendable {
                 request.setValue(deviceID, forHTTPHeaderField: "X-Msh-Device-Id")
             }
         }
-        request.httpBody = Data("client_id=\(Self.clientID)&grant_type=refresh_token&refresh_token=\(snapshot.refreshToken)".utf8)
+        request.httpBody = Data("client_id=\(Self.formEncode(Self.clientID))&grant_type=refresh_token&refresh_token=\(Self.formEncode(snapshot.refreshToken))".utf8)
 
         let response = try await http.send(request)
         let body = (try? JSONSerialization.jsonObject(with: response.data)) as? [String: Any]

@@ -39,7 +39,7 @@ func envHint(for provider: any Provider) -> String {
     case .bearer: return "env \(prefix)TOKEN"
     case .volcSignature: return "env \(prefix)AK / \(prefix)SK"
     case .consoleSession: return "console session"
-    case .localCLI: return "本机 CLI 登录态（~/.kimi-code）"
+    case .localCLI: return "local \(provider.manifest.displayName) CLI login (~/.kimi-code)"
     }
 }
 

@@ -67,7 +67,13 @@ public enum CredentialStore {
 
     /// localCLI 模式：不读 ~/.trwy/config.json，凭证指向本机 CLI 的 OAuth 登录态目录
     ///（KIMI_CODE_HOME 或 ~/.kimi-code），由适配器读取/刷新。
-    public static func localCLICredential(home: URL = KimiCLICredentialStore.defaultHome) -> Credential {
-        .localOAuth(home: home.path)
+    /// CLI 凭证文件不存在（= 未登录）时返回 nil：上层据此映射为 not-configured，
+    /// Dashboard 才会显示齿轮按钮（打开含 /login 指引的设置页），而不是误导性的
+    /// "Auth failed (check key)"。注意只判文件存在性，不判 token 新鲜度——
+    /// "文件存在但 token 过期"是正常路径，交由适配器刷新。
+    public static func localCLICredential(home: URL = KimiCLICredentialStore.defaultHome) -> Credential? {
+        let credentialsFile = home.appendingPathComponent("credentials/kimi-code.json")
+        guard FileManager.default.fileExists(atPath: credentialsFile.path) else { return nil }
+        return .localOAuth(home: home.path)
     }
 }
