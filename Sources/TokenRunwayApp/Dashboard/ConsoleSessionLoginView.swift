@@ -22,30 +22,14 @@ struct ConsoleSessionLoginView: View {
 
     var body: some View {
         VStack(spacing: 12) {
+            // 操作按钮放在 WebView 上方：macOS 上 WKWebView 的滚动视图可能溢出其 frame
+            // 并吞掉下方内容的点击（实测 Save 在底部会被盖住点不了），头部工具栏不受影响。
             HStack {
                 Text("Log in to \(manifest.displayName)")
                     .font(.headline)
                 Spacer()
-            }
-            Text("完成浏览器登录后，点击下方\"保存会话\"。会话过期后重新登录即可。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            WebViewRepresentable(manifestURL: loginURL)
-                .frame(height: 420)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            if let cookieError {
-                Text(cookieError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            HStack {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Spacer()
                 Button {
                     saveSession()
                 } label: {
@@ -58,9 +42,24 @@ struct ConsoleSessionLoginView: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(isSaving)
             }
+            Text("完成浏览器登录后，点击右上角\"Save session\"。会话过期后重新登录即可。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            WebViewRepresentable(manifestURL: loginURL)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            if let cookieError {
+                Text(cookieError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(16)
-        .frame(width: 560)
+        .frame(width: 560, height: 540)
     }
 
     // MARK: - Cookie extraction
@@ -107,6 +106,8 @@ private struct WebViewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: WebViewSession.configuration)
+        // 跟随容器尺寸变化：否则滚动视图可能溢出 frame 并吞掉下方按钮的点击
+        webView.autoresizingMask = [.width, .height]
         webView.load(URLRequest(url: manifestURL))
         return webView
     }

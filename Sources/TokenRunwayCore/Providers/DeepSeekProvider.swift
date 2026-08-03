@@ -9,7 +9,7 @@ public struct DeepSeekProvider: Provider {
         defaultBaseURL: "https://api.deepseek.com",
         allowsBaseURLOverride: true,
         defaultPollInterval: 180,
-        shortName: "ds",
+        shortName: "deep",
         consoleURL: "https://platform.deepseek.com",
         logoName: "deepseek_logo",
         themeColor: .blue

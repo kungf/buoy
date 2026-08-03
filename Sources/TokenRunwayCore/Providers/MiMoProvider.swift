@@ -12,7 +12,7 @@ public struct MiMoProvider: Provider {
         defaultBaseURL: "https://platform.xiaomimimo.com/api/v1",
         allowsBaseURLOverride: false,
         defaultPollInterval: 300,
-        shortName: "mm",
+        shortName: "mimo",
         consoleURL: "https://platform.xiaomimimo.com/console/plan-manage",
         logoName: "mimo_logo",
         themeColor: .gray
