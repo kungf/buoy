@@ -39,13 +39,20 @@ enum GifRenderer {
 
         let store = UsageStore()
         store.installDemoReport(volcanoReport())
+        // Ingest a declining balance series so the hover card's "Spent (last 5h)" row
+        // computes ¥0.32 from the samples (the last report stays as the current one).
+        for report in deepseekReports() { store.installDemoReport(report) }
+        // Self-check: the hover card's 5h spend must equal the ball's demo constant (−¥0.32).
+        if let spent = store.consumed5h(for: "deepseek") {
+            print("   deepseek demo spent(5h): ¥\(String(format: "%.2f", spent)) (ball shows −¥0.32)")
+        }
 
         let scenes: [(name: String, makeScene: (Double) -> AnyView)] = [
             ("ball_volcano.gif", { time in
                 AnyView(volcanoScene(store: store, time: time))
             }),
             ("ball_deepseek.gif", { time in
-                AnyView(deepseekScene(time: time))
+                AnyView(deepseekScene(store: store, time: time))
             }),
         ]
 
@@ -62,11 +69,11 @@ enum GifRenderer {
     private static func volcanoScene(store: UsageStore, time: Double) -> some View {
         let model = BallModel(
             mode: .windowed,
-            ringUsed: 0.76,        // 月(30d)已用 76% -> 剩余 24%,橙
-            midRingUsed: 0.42,     // 周(7d)已用 42% -> 剩余 58%,绿
-            coreLevel: 0.68,       // 5h 已用 68% -> 剩余 32%,橙
+            ringUsed: 0.76,        // 月(30d)环:已用 76% (环 = used-progress)
+            midRingUsed: 0.42,     // 周(7d)环:已用 42% (环 = used-progress)
+            coreLevel: 0.32,       // 5h 核液体:剩余 32% (核 = remaining water level)
             ringHealth: 0.24, midRingHealth: 0.58, coreHealth: 0.32,
-            centerText: "68%", subText: "5h",
+            centerText: "32%", subText: "5h",
             spentRecentText: nil, currencyBadge: nil,
             state: .consuming, breathUrgency: breathUrgency, isStale: false, alertBadges: [])
         return HStack(alignment: .center, spacing: Theme.hoverPanelGap) {
@@ -79,18 +86,27 @@ enum GifRenderer {
         }
     }
 
-    /// DeepSeek demo: balance-only ball (¥ amount, currency badge) —
-    /// mirrors `UsageStore.balanceBallModel` with a healthy ¥42.50 balance. Breathing urgency
-    /// is the seamless-loop value so the GIF wraps without a visible pop.
-    private static func deepseekScene(time: Double) -> some View {
+    /// DeepSeek demo: balance-only ball (¥ amount, currency badge) next to its hover card —
+    /// mirrors `UsageStore.balanceBallModel` with a healthy ¥42.50 balance. The ball shows
+    /// only the last-5h spend amount ("−¥0.32", no window label); the hover card labels it
+    /// as "Spent (last 5h)". Breathing urgency is the seamless-loop value so the GIF wraps
+    /// without a visible pop.
+    private static func deepseekScene(store: UsageStore, time: Double) -> some View {
         let model = BallModel(
             mode: .balance,
             ringUsed: nil, midRingUsed: nil, coreLevel: 0.62,
             ringHealth: nil, midRingHealth: nil, coreHealth: 0.62,
             centerText: "42.50", subText: "",
-            spentRecentText: "¥0.32·5h", currencyBadge: "¥",
+            spentRecentText: "−¥0.32", currencyBadge: "¥",
             state: .idle, breathUrgency: breathUrgency, isStale: false, alertBadges: [])
-        return BallScene(model: model, providerId: "deepseek", time: time)
+        return HStack(alignment: .center, spacing: Theme.hoverPanelGap) {
+            BallScene(model: model, providerId: "deepseek", time: time)
+            HoverSummaryView(store: store, providerId: "deepseek")
+                .padding(Theme.hoverPanelPadding)
+                .background(Color(NSColor.windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.hoverPanelCornerRadius))
+                .shadow(color: .black.opacity(0.15), radius: 10, y: -3)
+        }
     }
 
     /// Volcano report backing the hover card (same percentages as the ball above).
@@ -113,6 +129,34 @@ enum GifRenderer {
                       windowStart: now.addingTimeInterval(-12 * 86400),
                       resetsAt: now.addingTimeInterval(18 * 86400)),
             ])
+    }
+
+    /// DeepSeek demo: a declining balance series (42.50 -> 42.18, 5 samples over 4h) so the
+    /// hover card computes "Spent (last 5h) ¥0.32" — matching the ball's "−¥0.32" — and the
+    /// sparkline shows a steady upward consumption curve.
+    ///
+    /// The first sample sits at `now - 4h`, NOT `now - 5h`: `consumed` filters samples with
+    /// `at >= now - 5h` evaluated at render time (a few ms after construction), so a sample
+    /// exactly at `now - 5h` falls just outside the window and the spend reads 0.26 instead
+    /// of 0.32. Balance samples store `used = -remaining` (ForecastEngine convention).
+    private static func deepseekReports() -> [ProviderReport] {
+        let now = Date()
+        let balance = BalanceInfo(currency: "CNY", total: 42.50, granted: 0, toppedUp: 42.50)
+        func report(at: Date, remaining: Double) -> ProviderReport {
+            ProviderReport(
+                providerId: "deepseek",
+                fetchedAt: at,
+                quotas: [Quota(id: "deepseek.balance", type: .balance, label: "账户余额",
+                               unit: .cny, used: -remaining, remaining: remaining)],
+                balance: balance)
+        }
+        return [
+            report(at: now.addingTimeInterval(-4 * 3600), remaining: 42.50),
+            report(at: now.addingTimeInterval(-3 * 3600), remaining: 42.42),
+            report(at: now.addingTimeInterval(-2 * 3600), remaining: 42.34),
+            report(at: now.addingTimeInterval(-1 * 3600), remaining: 42.26),
+            report(at: now, remaining: 42.18),
+        ]
     }
 
     // MARK: - Frame pipeline

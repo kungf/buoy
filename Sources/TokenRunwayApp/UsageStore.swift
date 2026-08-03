@@ -364,20 +364,64 @@ final class UsageStore: ObservableObject {
                   breathUrgency: breath, isStale: stale, alertBadges: badges)
     }
 
+    /// `used` samples within the last `windowSeconds`, oldest first — feeds the hover-card
+    /// "last-5h spend" sparkline (Dashboard/Sparkline.swift). Balance samples store
+    /// `used = -remaining`, so the curve rises while the balance drops. Empty on cold start.
+    func usedSeries(for providerId: String, windowSeconds: TimeInterval) -> [Double] {
+        guard let quota = coreQuota(for: providerId) else { return [] }
+        let cutoff = Date().addingTimeInterval(-windowSeconds)
+        return forecast.samples(for: quota.id)
+            .filter { $0.at >= cutoff }
+            .map(\.used)
+    }
+
     /// Last-5h spend for the balance quota (top-up-robust, DESIGN.md §7). nil on cold start.
-    private func consumed5h(for providerId: String) -> Double? {
+    /// Internal for the hover card (HoverSummaryView) which labels the 5h window.
+    func consumed5h(for providerId: String) -> Double? {
         let windowSeconds: TimeInterval = 5 * 3600 // last-5h spend window
         guard let quota = coreQuota(for: providerId) else { return nil }
         return forecast.consumed(for: quota, windowSeconds: windowSeconds, now: Date())
     }
 
-    /// Balance high-water mark: max remaining observed in the sample buffer (render-time
-    /// only; no persistence). Balance samples store `used = -remaining`, so max remaining
-    /// = -min(used). nil when there are no samples.
-    private func balanceHighWater(for quota: Quota) -> Double? {
-        let usedValues = forecast.samples(for: quota.id).map(\.used)
-        guard let minUsed = usedValues.min() else { return nil }
-        return -minUsed
+    /// Balance high-water mark: the largest remaining balance observed, persisted across
+    /// launches (UserDefaults) so a restart never resets the "full" reference. Balance
+    /// samples store `used = -remaining`, so the in-session peak = -min(used).
+    ///
+    /// A significant upward jump in balance vs. the last observed value (top-up / grant
+    /// refresh) re-anchors the high-water to the new balance — a refilled account reads as
+    /// full again, even if the new balance is below the historical peak. A slow decline is
+    /// consumption and never re-anchors; a crash (grant expiry) intentionally does not,
+    /// so the low level keeps warning.
+    private static let balanceHighWaterKeyPrefix = "trwy.balanceHighWater"
+    /// Balance rising more than this ratio vs. the last observed value counts as a new
+    /// funding cycle (top-up / grant refresh), not consumption noise.
+    private static let topUpJumpRatio = 1.10
+
+    private func balanceHighWater(for quota: Quota, remaining: Double) -> Double {
+        let key = Self.balanceHighWaterKeyPrefix + "." + quota.id
+        let defaults = UserDefaults.standard
+        let persisted = defaults.double(forKey: key)
+        // In-session peak counts only samples after the last re-anchor: a top-up below the
+        // historical peak must not be undone by old high-balance samples still in the buffer.
+        let anchorDate = defaults.object(forKey: key + ".anchor") as? Date
+        let minUsed = forecast.samples(for: quota.id)
+            .filter { sample in anchorDate.map { $0 <= sample.at } ?? true }
+            .map(\.used)
+            .min() ?? 0
+        var highWater = max(persisted, -minUsed)
+
+        // Balance jumped vs. the last observed value -> refilled: re-anchor to full.
+        let lastKey = key + ".last"
+        if let last = defaults.object(forKey: lastKey) as? Double,
+           remaining > last * Self.topUpJumpRatio {
+            highWater = remaining
+            defaults.set(Date(), forKey: key + ".anchor")
+        } else if remaining > highWater {
+            highWater = remaining
+        }
+        if highWater > 0 { defaults.set(highWater, forKey: key) }
+        defaults.set(remaining, forKey: lastKey)
+        return highWater
     }
 
     /// Balance type: rings collapse to a single balance ball (DESIGN.md §8.3). Drops the ETA
@@ -390,7 +434,7 @@ final class UsageStore: ObservableObject {
         let remaining = quota?.effectiveRemaining ?? report.balance?.total ?? 0
 
         // Liquid level + color: remaining vs high-water mark (decoupled from breathing).
-        let highWater = quota.flatMap { balanceHighWater(for: $0) } ?? remaining
+        let highWater = quota.map { balanceHighWater(for: $0, remaining: remaining) } ?? remaining
         let level = highWater > 0 ? min(max(remaining / highWater, 0), 1) : 0
 
         // Breathing: consumed_5h / remaining (the bounded 5h/ETA form; static = calm).
@@ -398,8 +442,9 @@ final class UsageStore: ObservableObject {
         let consumed = consumedOpt ?? 0
         let breath = remaining > 0 ? min(max(consumed / remaining, 0), 1) : 0
 
-        // Upper (small): last-5h spend; Lower (big): balance.
-        let spentText = consumedOpt.map { "¥\(String(format: "%.2f", $0))·5h" } ?? "--"
+        // Upper (small): last-5h spend ("−¥x.xx"); Lower (big): balance. The 5h window is
+        // labeled on the hover card (HoverSummaryView), not on the ball itself.
+        let spentText = consumedOpt.map { "−¥\(String(format: "%.2f", $0))" } ?? "--"
 
         return BallModel(mode: .balance, ringUsed: nil, midRingUsed: nil,
                          coreLevel: level, ringHealth: nil, midRingHealth: nil, coreHealth: level,
@@ -409,7 +454,9 @@ final class UsageStore: ObservableObject {
                          state: state, breathUrgency: breath, isStale: stale, alertBadges: badges)
     }
 
-    /// Windowed type: outer ring (30d) + middle ring (7d) + core liquid (active window).
+    /// Windowed type: outer ring (30d) + middle ring (7d) as used-progress, core liquid as
+    /// the active window's REMAINING water level (unified with balance mode: full = healthy,
+    /// drains as you consume — README "core liquid shows your current-window remaining").
     private func windowedBallModel(report: ProviderReport, state: BallState,
                                    badges: [AlertBadge], breath: Double, stale: Bool) -> BallModel {
         let providerId = report.providerId
@@ -422,7 +469,7 @@ final class UsageStore: ObservableObject {
         let now = Date()
         let ringUsed = ringQ?.percentUsedAt(now: now)
         let midUsed = midQ?.percentUsedAt(now: now)
-        let coreLevel = coreQ?.percentUsedAt(now: now)
+        let coreLevel = coreQ?.percentUsedAt(now: now).map { 1 - $0 }
         let isError = state == .error
         let center: String
         if isError { center = "!" }
@@ -481,8 +528,14 @@ final class UsageStore: ObservableObject {
 
     /// Install a single hand-built report (used by the GIF/snapshot renderers, which need
     /// fixed data that the named scenarios do not cover).
+    /// Upsert semantics (like `upsert`, but without the ordering step): a demo report for a
+    /// provider replaces that provider's report and keeps the others. Also ingests the report
+    /// so the hover card's "Spent (last 5h)" row has samples to compute from.
     func installDemoReport(_ report: ProviderReport) {
-        reports = [report]
+        forecast.ingest(report: report, pollInterval: 3600)
+        var next = reports.filter { $0.providerId != report.providerId }
+        next.append(report)
+        reports = next
     }
 
     /// Scenarios: critical 5h 95% red / warning 45% orange / healthy 10% green /

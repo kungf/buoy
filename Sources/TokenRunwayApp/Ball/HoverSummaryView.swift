@@ -97,13 +97,32 @@ struct HoverSummaryView: View {
     // MARK: - Balance
 
     private func balanceRow(_ balance: BalanceInfo) -> some View {
-        HStack {
-            Text("Balance")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(String(format: "¥%.2f", balance.total))
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Balance")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "¥%.2f", balance.total))
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+            }
+            // Last-5h spend: the window is labeled here (the ball only shows the amount),
+            // with a sparkline of the same window (used rises while the balance drops).
+            // Shown whenever computable (including ¥0.00) so card and ball agree.
+            if let spent = store.consumed5h(for: providerId) {
+                HStack {
+                    Text("Spent (last 5h)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "¥%.2f", spent))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.color)
+                }
+                Sparkline(values: store.usedSeries(for: providerId, windowSeconds: 5 * 3600),
+                          color: theme.color)
+                    .frame(height: 14)
+            }
         }
     }
 
