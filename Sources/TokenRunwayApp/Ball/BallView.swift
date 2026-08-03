@@ -197,11 +197,12 @@ struct BallScene: View {
 
     // MARK: - State-driven animation modifiers (DESIGN.md §8.4)
 
-    /// depleted: slow blink; stale: dimmed; otherwise fully opaque
+    /// depleted: slow blink; stale/expired: dimmed; otherwise fully opaque
     private func displayOpacity(_ time: Double) -> Double {
         if model.state == .depleted {
             return 0.55 + 0.45 * (0.5 + 0.5 * sin(time * .pi / 1.5)) // ~1.5s slow blink
         }
+        if model.state == .expired { return 0.55 }
         if model.isStale && model.state != .error { return 0.55 }
         return 1.0
     }

@@ -110,6 +110,30 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedProviderIds, ["provider_c"])
     }
 
+    // MARK: - Ball state (expired / error precedence)
+
+    func test_ballState_expiredPlanWithFetchError_prefersError() {
+        let store = makeStore()
+        store.selectOnly("provider_a")
+        installReport(store, id: "provider_a", planExpired: true)
+
+        // When: fetch fails (e.g. cookie expired -> 401) while plan is expired
+        store.providerErrors["provider_a"] = "Auth failed (check key)"
+
+        // Then: transient error wins over the persistent expired state
+        XCTAssertEqual(store.ballState(for: "provider_a"), .error)
+    }
+
+    func test_ballState_expiredPlanShowsExpired_whenNoError() {
+        let store = makeStore()
+        store.selectOnly("provider_a")
+        installReport(store, id: "provider_a", planExpired: true)
+
+        // When: fetch succeeded but the plan itself is expired
+        // Then: ball reads as expired (dimmed)
+        XCTAssertEqual(store.ballState(for: "provider_a"), .expired)
+    }
+
     // MARK: - Helpers
 
     /// Create a UsageStore with N mock providers.
@@ -122,14 +146,15 @@ final class UsageStoreTests: XCTestCase {
     }
 
     /// Install a minimal report for a provider (no windowed quotas, so the ball is idle).
-    private func installReport(_ store: UsageStore, id: String) {
+    private func installReport(_ store: UsageStore, id: String, planExpired: Bool? = nil) {
         let report = ProviderReport(
             providerId: id,
             fetchedAt: Date(),
             quotas: [
                 Quota(id: "\(id).balance", type: .balance, label: "Balance", unit: .cny, remaining: 100)
             ],
-            balance: BalanceInfo(currency: "CNY", total: 100, granted: 0, toppedUp: 100)
+            balance: BalanceInfo(currency: "CNY", total: 100, granted: 0, toppedUp: 100),
+            planExpired: planExpired
         )
         store.installDemoReport(report)
     }
