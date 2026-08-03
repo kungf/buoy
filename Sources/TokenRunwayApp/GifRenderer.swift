@@ -82,8 +82,11 @@ enum GifRenderer {
                 .padding(Theme.hoverPanelPadding)
                 .background(Color(NSColor.windowBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.hoverPanelCornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.hoverPanelCornerRadius)
+                    .stroke(Color.black.opacity(0.15), lineWidth: 1))
                 .shadow(color: .black.opacity(0.15), radius: 10, y: -3)
         }
+        .frame(height: 158) // shared canvas height so both README GIFs render the same size
     }
 
     /// DeepSeek demo: balance-only ball (¥ amount, currency badge) next to its hover card —
@@ -105,8 +108,11 @@ enum GifRenderer {
                 .padding(Theme.hoverPanelPadding)
                 .background(Color(NSColor.windowBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.hoverPanelCornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.hoverPanelCornerRadius)
+                    .stroke(Color.black.opacity(0.15), lineWidth: 1))
                 .shadow(color: .black.opacity(0.15), radius: 10, y: -3)
         }
+        .frame(height: 158) // shared canvas height so both README GIFs render the same size
     }
 
     /// Volcano report backing the hover card (same percentages as the ball above).
