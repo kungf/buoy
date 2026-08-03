@@ -5,7 +5,8 @@
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 
 <p align="center">
-  <img src="assets/dashboard.png?v=2" alt="TokenRunway Dashboard" width="700">
+  <img src="assets/ball_volcano.gif" alt="Volcano floating ball: monthly / weekly / 5-hour quotas" width="350">
+  <img src="assets/ball_deepseek.gif" alt="DeepSeek floating ball: balance only" width="170">
 </p>
 
 > An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across all your providers, before you hit empty.
