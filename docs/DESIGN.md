@@ -1,57 +1,57 @@
-# TokenRunway（原 Buoy）- 设计文档
+# TokenRunway (formerly Buoy) - Design Document
 
-> macOS 常驻桌面悬浮小球，一眼呈现多 provider 的 API token / 额度消耗，并在额度被快速烧掉时预警。
-> 技术栈：SwiftUI + AppKit（原生）。TokenRunway = token 剩余跑道；早年代号 Buoy（浮标）：浮在桌面上的球，液面随额度起伏，危险时闪红光——不是隐喻，是直译。
+> A persistent floating ball on the macOS desktop that shows API token / quota consumption across multiple providers at a glance, and raises an alert when quota is being burned through quickly.
+> Tech stack: SwiftUI + AppKit (native). TokenRunway = token remaining runway; early codename Buoy: a ball floating on the desktop, its water line rising and falling with quota, flashing red when in danger - not a metaphor, but the literal description.
 
 ---
 
-## 0. 概述
+## 0. Overview
 
-### 0.1 一句话定位
-把"打开 5 个 provider 官网查额度"压缩成"瞥一眼桌面小球"。
+### 0.1 One-Sentence Positioning
+Compress "opening 5 provider websites to check quota" into "a glance at the desktop ball".
 
-### 0.2 核心价值
-- **Glanceable**：一眼知消耗，无需打开浏览器、无需切走当前工作。
-- **多 provider 统一视图**：火山（5h / 周 / 月 三级滚动）、DeepSeek（纯余额）、MiMo（月度）、OpenAI / Anthropic（各有计费周期与额度）--同构呈现：球面单 provider 聚焦（同一时刻只展示一个），单击开总面板纵览全部（见 §8.1）。
-- **预测优于报数**：基于燃烧率给出 ETA（"5h 额度按当前速度还剩 12 分钟"），直击"5 小时额度 10 分钟烧完才发现"的痛点。
-- **常驻低耗**：原生 SwiftUI，常驻内存与 CPU 占用极小；不抢焦点；点击穿透为可切换模式（穿透 / 交互，见 §8.5）。
+### 0.2 Core Value
+- **Glanceable**: know consumption at a glance, without opening a browser or leaving current work.
+- **Unified multi-provider view**: Volcano (three-tier rolling 5h / week / month), DeepSeek (pure balance), MiMo (monthly), OpenAI / Anthropic (each with its own billing cycle and quota) - presented homogeneously: the ball surface focuses on a single provider (showing only one at a time), a single click opens the overview panel to survey all (§8.1).
+- **Prediction over reporting**: give an ETA based on burn rate ("5h quota has 12 minutes left at the current rate"), directly hitting the pain point of "only noticing after 5 hours of quota is burned through in 10 minutes".
+- **Persistent and low-overhead**: native SwiftUI, tiny resident memory and CPU usage; never steals focus; click-through is a toggleable mode (pass-through / interactive, see §8.5).
 
-### 0.3 竞品坐标（2026-07 调研）
+### 0.3 Competitor Landscape (2026-07 research)
 
-AI 额度监控赛道已拥挤，但形态趋同——**全是菜单栏 / CLI / 系统托盘，无人做悬浮球**：
+The AI quota monitoring space is crowded, but the form factors converge - **all of them are menu bar / CLI / system tray, nobody does a floating ball**:
 
-| 项目 | 形态 | 覆盖 | 备注 |
+| Project | Form | Coverage | Notes |
 |---|---|---|---|
-| Claude-Code-Usage-Monitor（8.5k⭐） | Python CLI | 仅 Claude | 已有燃烧率预测，"预测"非独有卖点 |
-| ClaudeBar（1.4k⭐） | Swift 菜单栏 | Claude/Codex/Gemini | 多助手 |
-| TokenEater（442⭐） | 原生 macOS overlay | 仅 Claude | 形态最接近 TokenRunway |
-| ClaudeMeter（125⭐） | Swift 菜单栏 | Claude 5h 会话 + 7d 周额度 | 窗口概念与火山 AFP 同构 |
+| Claude-Code-Usage-Monitor (8.5k⭐) | Python CLI | Claude only | Already has burn rate prediction; "prediction" is not a unique selling point |
+| ClaudeBar (1.4k⭐) | Swift menu bar | Claude/Codex/Gemini | Multiple assistants |
+| TokenEater (442⭐) | Native macOS overlay | Claude only | Form factor closest to TokenRunway |
+| ClaudeMeter (125⭐) | Swift menu bar | Claude 5h session + 7d weekly quota | Window concept isomorphic to Volcano AFP |
 
-**TokenRunway 差异化**：① 悬浮球形态独占（液面 + 呼吸节奏）；② 中国 provider 真空（火山 ARK / DeepSeek / MiMo 无人覆盖）；③ 统一 Quota 模型 + adapter-first（现有工具均为单 provider 硬编码解析）。
-**撞名检查**：App Store 无精确同名；GitHub 有 Buoy-gg（React Native 调试工具，Electron），受众不重叠，发布时靠 icon / 域名区分。
+**TokenRunway differentiation**: (1) exclusive floating-ball form factor (water line + breathing rhythm); (2) a vacuum for Chinese providers (Volcano ARK / DeepSeek / MiMo are covered by nobody); (3) unified Quota model + adapter-first (all existing tools do single-provider hardcoded parsing).
+**Name-collision check**: no exact same name on the App Store; GitHub has Buoy-gg (a React Native debugging tool, Electron), audiences do not overlap; differentiate via icon / domain at release.
 
-### 0.4 非目标（MVP 阶段）
-- 不做请求级实时监控（不拦截 / 代理 API 调用），仅靠 provider 官方用量 / 计费 API 周期性拉取。
-- 不做跨平台（仅 macOS；决策于 2026-07：Windows 托盘赛道已有竞品，TokenRunway 的空位是 macOS 原生 + 中国 provider。逃生通道：`Core/` 层只依赖 Foundation、零 AppKit/SwiftUI import，将来若做 Windows——首选 Tauri——只需重写 UI 与平台能力层，Core 逻辑照本设计移植）。
-- 不做团队 / 多账号管理（单机单用户）。
-- 不做 provider 网关或聚合服务（纯本地客户端直连）。
-
----
-
-## 1. 核心理念与设计原则
-
-1. **Adapter-first**：provider 差异全部收敛在适配层；上层 UI / 调度 / 预测只认统一模型，不感知 provider 细节。
-2. **统一额度模型（核心抽象）**：用一组正交的 `QuotaType`（时间窗 / 余额 / 速率限制）描述所有计费形态；一个 provider 一次返回 0~N 个 `Quota`。
-3. **预测 > 报数**：不只显示"已用 X / Y"，更算出燃烧率与 ETA，把"快"做成可感知的节奏。
-4. **优雅降级**：拉取失败时显示上次成功值 + stale 标记，不让小球"瞎跳"。
-5. **常驻克制**：低频轮询、错峰调度、本地缓存、不抢焦点。
-6. **密钥零落盘**：API key 仅存 Keychain，永不明文写盘、永不进日志、永不上传第三方。
+### 0.4 Non-Goals (MVP phase)
+- No request-level real-time monitoring (no interception / proxying of API calls); rely only on periodic pulls from provider official usage / billing APIs.
+- No cross-platform (macOS only; decided 2026-07: the Windows tray space already has competitors, TokenRunway's opening is native macOS + Chinese providers. Escape hatch: the `Core/` layer only depends on Foundation with zero AppKit/SwiftUI imports, so if Windows is ever pursued - Tauri the first choice - only the UI and platform capability layers need rewriting; Core logic ports per this design).
+- No team / multi-account management (single machine, single user).
+- No provider gateway or aggregation service (pure local client, direct connection).
 
 ---
 
-## 2. 系统架构
+## 1. Core Concepts and Design Principles
 
-### 2.1 分层与数据流
+1. **Adapter-first**: all provider differences converge in the adapter layer; the upper UI / scheduling / prediction layers only recognize the unified model and never sense provider details.
+2. **Unified quota model (core abstraction)**: describe every billing shape with a set of orthogonal `QuotaType` (time window / balance / rate limit); one provider returns 0~N `Quota` at a time.
+3. **Prediction > reporting**: not just "used X / Y", but computing burn rate and ETA, making "fast" a perceivable rhythm.
+4. **Graceful degradation**: on fetch failure show the last successful values + a stale marker, so the ball doesn't "jump blindly".
+5. **Restrained persistence**: low-frequency polling, staggered scheduling, local caching, never steals focus.
+6. **Keys never touch disk**: API keys live only in the Keychain, never written to disk in plaintext, never in logs, never uploaded to third parties.
+
+---
+
+## 2. System Architecture
+
+### 2.1 Layers and Data Flow
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -79,15 +79,15 @@ AI 额度监控赛道已拥挤，但形态趋同——**全是菜单栏 / CLI / 
 └──────────────────────────────────────────────────┘
 ```
 
-### 2.2 进程模型
-单进程。一个常驻 `NSPanel`（浮动球）+ 一个 menu bar item + 一个用于设置的 `Window`。
-后台拉取用 `async/await` + `URLSession`，由 `PollScheduler` 驱动；MVP 不引入后台 daemon。
+### 2.2 Process Model
+Single process. One persistent `NSPanel` (floating ball) + one menu bar item + one `Window` for settings.
+Background fetching uses `async/await` + `URLSession`, driven by `PollScheduler`; no background daemon in the MVP.
 
 ---
 
-## 3. 统一额度模型（核心抽象）
+## 3. Unified Quota Model (core abstraction)
 
-把所有计费形态归一为一组 `Quota`。一个 provider 一次返回 0~N 个 quota，上层完全不需要知道"这是火山还是 DeepSeek"。
+Normalize all billing shapes into one set of `Quota`. One provider returns 0~N quotas per fetch, and the upper layers never need to know "is this Volcano or DeepSeek".
 
 ### 3.1 QuotaType
 
@@ -134,22 +134,22 @@ struct ProviderReport {
 }
 ```
 
-### 3.4 各 provider -> Quota 映射（对应你的描述）
+### 3.4 Provider -> Quota Mapping (corresponding to your description)
 
-| Provider | 返回的 Quota | 类型 | 备注 |
+| Provider | Quota returned | Type | Notes |
 |---|---|---|---|
-| 火山 Volcano | 4 个 timeWindowed（5h / 1d / 7d / 30d，via GetAFPUsage） | AK/SK 签名 | 轮播 5h/7d/30d |
-| DeepSeek | 1 个 balance | 账户余额 | 有钱就能用 |
-| Kimi Code | 1 个 timeWindowed（7d 每周配额）+ N 个 timeWindowed（滚动限流窗，如 300m）+ 可选 balance（加油包，仅 STATUS_ENABLED） | localCLI（本机 CLI OAuth 登录态） | 零配置，复用 `kimi` CLI 登录 |
-| MiMo | 1 个 timeWindowed（月度） | 自然月 or 30 天滚动（待核实） | 单环 |
-| OpenAI | timeWindowed（计费周期）+ balance（grant） | 花费 + 额度 | 可选 rateLimit |
-| Anthropic | timeWindowed（计费周期）+ per-day usage | 花费 + 用量 | - |
+| Volcano | 4 timeWindowed (5h / 1d / 7d / 30d, via GetAFPUsage) | AK/SK signature | Carousel 5h/7d/30d |
+| DeepSeek | 1 balance | Account balance | Use as long as you have money |
+| Kimi Code | 1 timeWindowed (7d weekly quota) + N timeWindowed (rolling rate-limit windows, e.g. 300m) + optional balance (booster pack, only STATUS_ENABLED) | localCLI (local CLI OAuth login state) | Zero config, reuses `kimi` CLI login |
+| MiMo | 1 timeWindowed (monthly) | Calendar month or 30-day rolling (to be verified) | Single ring |
+| OpenAI | timeWindowed (billing cycle) + balance (grant) | Spend + quota | Optional rateLimit |
+| Anthropic | timeWindowed (billing cycle) + per-day usage | Spend + usage | - |
 
-> "各家 reset 方式不一样"在模型层被彻底消化：上层只见一组 `Quota`，UI / 预测逻辑完全复用。
+> "Each provider resets differently" is fully digested at the model layer: the upper layers only see a set of `Quota`, and UI / prediction logic is completely reused.
 
 ---
 
-## 4. Provider 适配器接口
+## 4. Provider Adapter Interface
 
 ```swift
 /// 鉴权模式：三种（provider 选其一）
@@ -199,15 +199,15 @@ protocol ProviderConfig {
 }
 ```
 
-**ConsoleSessionController**（console 模式核心组件，Core/Auth）：
-- 每个 console provider 持一个隐藏 `WKWebView`，加载 `loginURL`。
-- 注入 `WKUserScript` hook 页面自身的 `fetch` / `XHR`，按 `quotaEndpointPattern` 拦截额度接口响应，经 `WKScriptMessageHandler` 把 JSON 回传 Swift，用 `extractors` 解析成 `Quota`。
-- 刷新 = 让页面 reload；session 过期（接口 401 / 跳登录页）-> 置 stale 并提示重新登录。
-- 用户在 App 内登录一次，2FA / 短信 / 验证码由 WebView 真浏览器上下文自动处理；**App 不接触密码**。
+**ConsoleSessionController** (core component of console mode, Core/Auth):
+- Each console provider holds a hidden `WKWebView` loading `loginURL`.
+- Inject `WKUserScript` to hook the page's own `fetch` / `XHR`, intercept quota endpoint responses per `quotaEndpointPattern`, hand the JSON back to Swift via `WKScriptMessageHandler`, and parse it into `Quota` with `extractors`.
+- Refresh = reload the page; session expiry (API 401 / redirected to login page) -> mark stale and prompt to log in again.
+- The user logs in once inside the app; 2FA / SMS / verification codes are handled automatically by the WebView's real browser context; **the app never touches passwords**.
 
-**ProviderRegistry**：编译期注册（或 plist + 反射）；设置窗"添加 provider"时枚举。新增 provider = 新增一个符合 `Provider` 的类型 + 注册一行。
+**ProviderRegistry**: compile-time registration (or plist + reflection); enumerated by the settings window's "add provider". Adding a provider = adding a `Provider`-conforming type + one registration line.
 
-**错误模型**：
+**Error model**:
 
 ```swift
 enum ProviderError: Error {
@@ -220,25 +220,25 @@ enum ProviderError: Error {
 }
 ```
 
-> volcSignature 模式下 401 需区分"凭证错误"与"本地时钟漂移"（X-Date 超窗导致签名失效）：两者提示文案不同，时钟漂移应引导用户校准系统时间。
+> In volcSignature mode, a 401 must distinguish "credential error" from "local clock drift" (X-Date out of window invalidates the signature): the two need different message copy, and clock drift should guide the user to calibrate the system time.
 
 ---
 
-## 5. 各 Provider 适配器规格
+## 5. Per-Provider Adapter Specs
 
-> 基线：**DeepSeek（bearer / 余额）+ 火山（volcSignature / 5h·7d·30d）**，两者接口均已确认。MiMo / OpenAI / Anthropic 后续阶段补。
+> Baseline: **DeepSeek (bearer / balance) + Volcano (volcSignature / 5h·7d·30d)**, both APIs already confirmed. MiMo / OpenAI / Anthropic to be added in later phases.
 
-### 5.1 DeepSeek ✅ 确定（apiKey 模式）
+### 5.1 DeepSeek ✅ Confirmed (apiKey mode)
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
 | AuthMode | `bearer` |
-| BaseURL | `https://api.deepseek.com`（可改自建 / 代理） |
+| BaseURL | `https://api.deepseek.com` (changeable to self-hosted / proxy) |
 | Endpoint | `GET /user/balance` |
 | Auth | `Authorization: Bearer <api_key>` |
-| Quota 映射 | 1 个 `balance`：id=`deepseek.balance`，remaining=`total_balance`，unit=`.cny` |
+| Quota mapping | 1 `balance`: id=`deepseek.balance`, remaining=`total_balance`, unit=`.cny` |
 
-响应：
+Response:
 ```json
 {
   "is_available": true,
@@ -247,23 +247,23 @@ enum ProviderError: Error {
   ]
 }
 ```
-- `granted_balance` = 赠送额度，`topped_up_balance` = 充值额度，`total_balance` = 合计；详情面板可拆分。
-- 无时间窗 -> balance 型；ETA = total_balance / 燃烧率（¥/天）。
+- `granted_balance` = granted balance, `topped_up_balance` = topped-up balance, `total_balance` = total; the detail panel can break these out.
+- No time window -> balance type; ETA = total_balance / burn rate (¥/day).
 
-### 5.2 火山 Volcano ✅ 确定（volcSignature 模式，AK/SK）
+### 5.2 Volcano ✅ Confirmed (volcSignature mode, AK/SK)
 
-官方有管控面 OpenAPI，**不需要 console 登录 / 抓包**。`GetAFPUsage` 一次返回 5h / 日 / 周 / 月 四个窗口的额度。
+Official control-plane OpenAPI exists, **no console login / packet capture needed**. `GetAFPUsage` returns quota for the four windows 5h / day / week / month in one call.
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
-| AuthMode | `volcSignature`（AccessKey + SecretKey + HMAC-SHA256，Volc Signature V4） |
-| Host | `https://open.volcengineapi.com`（通用开放网关；⚠️ 不是 `ark.cn-beijing.volces.com`——那是推理端点，其鉴权层不认 IAM AK/SK，实测 401） |
+| AuthMode | `volcSignature` (AccessKey + SecretKey + HMAC-SHA256, Volc Signature V4) |
+| Host | `https://open.volcengineapi.com` (general open gateway; ⚠️ not `ark.cn-beijing.volces.com` - that is the inference endpoint, whose auth layer does not accept IAM AK/SK; verified 401 in practice) |
 | Endpoint | `POST /?Action=GetAFPUsage&Version=2024-01-01` |
-| 请求 body | `{}`（空） |
-| 请求头 | `Content-Type: application/json`、`X-Date`、`X-Content-Sha256`、`Authorization: HMAC-SHA256 Credential=AK/.../cn-beijing/ark/request, SignedHeaders=host;x-content-sha256;x-date, Signature=...` |
-| 凭证 | 用户的火山 **AccessKey + SecretKey**（IAM 凭证，非 ARK API Key） |
+| Request body | `{}` (empty) |
+| Request headers | `Content-Type: application/json`, `X-Date`, `X-Content-Sha256`, `Authorization: HMAC-SHA256 Credential=AK/.../cn-beijing/ark/request, SignedHeaders=host;x-content-sha256;x-date, Signature=...` |
+| Credentials | User's Volcano **AccessKey + SecretKey** (IAM credentials, not ARK API Key) |
 
-响应（节选）：
+Response (excerpt):
 ```json
 {
   "ResponseMetadata": { "Action": "GetAFPUsage", "Service": "ark", "Region": "cn-beijing" },
@@ -276,85 +276,85 @@ enum ProviderError: Error {
   }
 }
 ```
-- 每个窗口对象：`Quota`(总配额=limit)、`Used`(已用)、`SubscribeTime`(窗口起，epoch ms)、`ResetTime`(下次重置，epoch ms)。AFP = 套餐额度单位（点数）。
-- **Quota 映射**：4 个 `timeWindowed`：
+- Each window object: `Quota` (total quota = limit), `Used` (used), `SubscribeTime` (window start, epoch ms), `ResetTime` (next reset, epoch ms). AFP = plan quota unit (points).
+- **Quota mapping**: 4 `timeWindowed`:
   - `volcano.5h` ← `AFPFiveHour`
-  - `volcano.1d` ← `AFPDaily`（bonus，默认隐藏）
+  - `volcano.1d` ← `AFPDaily` (bonus, hidden by default)
   - `volcano.7d` ← `AFPWeekly`
   - `volcano.30d` ← `AFPMonthly`
-  - `used=Used`、`limit=Quota`、`windowStart=SubscribeTime`、`resetsAt=ResetTime`、`unit=.credits`
-- **Quota=0 语义**：某窗口返回 `Quota: 0`（如示例中的 Weekly/Monthly）表示该套餐**未开通此窗口** -> 不生成对应 Quota（而非生成 limit=0 的 quota），避免除零与误导性的"0%"。
-- 球面轮播主显 `5h / 7d / 30d`；日窗口进详情面板。
-- **燃烧率 / ETA**：每 ~2 min 轮询快照，用相邻 `Used` 差值算燃烧率，`remaining = Quota − Used`，`ETA = remaining / 燃烧率` -> 完美支撑"5h 额度 10 分钟烧完"预警。
+  - `used=Used`, `limit=Quota`, `windowStart=SubscribeTime`, `resetsAt=ResetTime`, `unit=.credits`
+- **Quota=0 semantics**: a window returning `Quota: 0` (like Weekly/Monthly in the example) means the plan **does not include this window** -> do not generate the corresponding Quota (rather than generating a quota with limit=0), avoiding division by zero and a misleading "0%".
+- The ball carousel primarily shows `5h / 7d / 30d`; the daily window goes into the detail panel.
+- **Burn rate / ETA**: poll snapshots every ~2 min, compute burn rate from the delta between adjacent `Used` values, `remaining = Quota − Used`, `ETA = remaining / burn rate` -> perfectly supports the "5h quota burned through in 10 minutes" alert.
 
-### 5.3 Kimi Code ✅ 确定（localCLI 模式，零配置）
+### 5.3 Kimi Code ✅ Confirmed (localCLI mode, zero config)
 
-无管控面 OpenAPI 也不需要用户手填 token：**复用本机 Kimi Code CLI 的 OAuth 登录态**（与 CLI 共用同一凭证文件）。
+No control-plane OpenAPI, and no manually-filled token from the user: **reuse the local Kimi Code CLI's OAuth login state** (sharing the same credential file as the CLI).
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
-| AuthMode | `localCLI`（新增第四种鉴权模式：读本机 CLI 凭证文件，无需用户配置） |
-| 凭证文件 | `$KIMI_CODE_HOME/credentials/kimi-code.json`（默认 `~/.kimi-code`），含 `access_token` / `refresh_token` / `expires_at` |
-| 用量 Endpoint | `GET https://api.kimi.com/coding/v1/usages`，`Authorization: Bearer <access_token>` |
-| 刷新 Endpoint | `POST https://auth.kimi.com/api/oauth/token`（form-urlencoded `grant_type=refresh_token`；有 `~/.kimi-code/device_id` 时带 `X-Msh-Device-Id` header） |
-| 配额详情页 | `https://www.kimi.com/membership/subscription?tab=quota` |
+| AuthMode | `localCLI` (new fourth auth mode: read the local CLI credential file, no user config needed) |
+| Credential file | `$KIMI_CODE_HOME/credentials/kimi-code.json` (default `~/.kimi-code`), containing `access_token` / `refresh_token` / `expires_at` |
+| Usage endpoint | `GET https://api.kimi.com/coding/v1/usages`, `Authorization: Bearer <access_token>` |
+| Refresh endpoint | `POST https://auth.kimi.com/api/oauth/token` (form-urlencoded `grant_type=refresh_token`; when `~/.kimi-code/device_id` exists, send the `X-Msh-Device-Id` header) |
+| Quota details page | `https://www.kimi.com/membership/subscription?tab=quota` |
 
-- **Token 生命周期**：access_token 仅 15 分钟有效。`expires_at > now + 60s` 直接用；否则刷新并**原子写回**（tmp + rename，chmod 0600，保留 `scope` / `token_type` 等未知字段；`refresh_token` 轮换时随响应更新）。
-- **多进程协调**（与 CLI 协议一致）：刷新前重读一次凭证文件，若 `refresh_token` 已被外部轮换（CLI 刚刷新过），直接用文件里的新 access_token，放弃本次刷新。
-- **未登录**：凭证文件不存在或刷新返回 401/403/`invalid_grant` -> `unauthorized`，提示用户运行 `kimi` 并执行 `/login`。
-- **Quota 映射**（响应数值均为字符串数字，`resetTime` 为带小数秒的 ISO8601）：
-  - `kimi.7d` ← `usage`：**每周配额**（7 天窗口），数值为**百分比**（limit 恒为 100），`windowStart = resetTime − 7d`
-  - `kimi.rate.<duration><unit>` ← `limits[]`：滚动限流窗（如 300 分钟 = 5 小时窗，`kimi.rate.300m`），支持 `TIME_UNIT_MINUTE/HOUR/DAY/WEEK`，`windowStart = detail.resetTime − 窗口时长`
-  - `kimi.booster` ← `boosterWallet`：加油包，**仅 `STATUS_ENABLED`** 时映射为 `balance`（unit `.cny`，`priceInCents` 为分）；disabled / 缺省 / 数值缺失均跳过，不硬编
-- **轮询**：默认 300s（token 15 分钟有效期，不宜更密）。
-- 实现：`Providers/KimiProvider.swift`（适配器）+ `Auth/KimiCLICredentialStore.swift`（凭证读取/刷新/写回，HTTPClient 可注入，单测覆盖）。
+- **Token lifecycle**: access_token is valid for only 15 minutes. Use directly when `expires_at > now + 60s`; otherwise refresh and **write back atomically** (tmp + rename, chmod 0600, preserving unknown fields like `scope` / `token_type`; `refresh_token` is updated from the response when rotated).
+- **Multi-process coordination** (consistent with the CLI protocol): re-read the credential file before refreshing; if `refresh_token` has been rotated externally (the CLI just refreshed), use the new access_token from the file directly and abandon this refresh.
+- **Not logged in**: credential file missing, or refresh returns 401/403/`invalid_grant` -> `unauthorized`; prompt the user to run `kimi` and execute `/login`.
+- **Quota mapping** (response values are all string numbers; `resetTime` is ISO8601 with fractional seconds):
+  - `kimi.7d` ← `usage`: **weekly quota** (7-day window), value is a **percentage** (limit is always 100), `windowStart = resetTime − 7d`
+  - `kimi.rate.<duration><unit>` ← `limits[]`: rolling rate-limit windows (e.g. 300 minutes = 5-hour window, `kimi.rate.300m`), supports `TIME_UNIT_MINUTE/HOUR/DAY/WEEK`, `windowStart = detail.resetTime − window duration`
+  - `kimi.booster` ← `boosterWallet`: booster pack, mapped to `balance` **only when `STATUS_ENABLED`** (unit `.cny`, `priceInCents` in cents); disabled / absent / missing values all skipped, nothing hardcoded
+- **Polling**: default 300s (token valid for 15 minutes; no need to poll more often).
+- Implementation: `Providers/KimiProvider.swift` (adapter) + `Auth/KimiCLICredentialStore.swift` (credential read / refresh / write-back; HTTPClient injectable; covered by unit tests).
 
-### 5.4 后续 provider（M3）
-MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 / 计费 API），MiMo 视情况 consoleSession。
-
----
-
-## 6. 数据获取与轮询策略
-
-- **轮询间隔**：per-provider 可配，默认按"窗口越短、频率越高"：
-  - 火山 5h 窗：默认 2 分钟（窗口短、变化快）
-  - DeepSeek 余额：5 分钟
-  - 月度类（MiMo / OpenAI / Anthropic）：10~15 分钟
-- **调度**：`PollScheduler` 为每个 provider 持有一个 timer，**错峰**（避免齐刷刷打满网络）；App 回到前台立即刷新一次。
-- **退避**：429 / 5xx 指数退避（上限 5 次），失败不丢 UI。
-- **降级**：拉取失败 -> 显示 `lastGoodReport`（本地缓存）+ 球面 stale 脉冲；连续失败 N 次切 error 态。
-- **缓存**：本地 JSON 存最近一次成功 report + 燃烧率样本环形 buffer。buffer 按窗口长度适配：短窗（5h / 1d）保留最近 ~120 个原始采样点；长窗（7d / 30d / 月度）额外维护日级聚合点，避免"月度 ETA 实际只反映最近一天"。
+### 5.4 Later Providers (M3)
+MiMo / OpenAI / Anthropic deferred; OpenAI / Anthropic most likely bearer (usage / billing APIs), MiMo consoleSession depending on the situation.
 
 ---
 
-## 7. 燃烧率与预警（直击痛点）
+## 6. Data Fetching and Polling Strategy
 
-- **燃烧率**：基于最近 K 个采样点拟合斜率 -> `tokens/min`、`$/hour`。参与拟合的相邻样本对必须满足两个条件：① **未跨过 `resetsAt`**（窗口 reset 后 Used 跳回 0，跨 reset 的样本对产生负 delta，必须丢弃）；② **相邻 `fetchedAt` 间隔 < 3× 轮询周期**（系统睡眠 / 唤醒产生的大空洞样本对丢弃，避免"睡醒一觉"被误判为暴烧）。
-- **ETA**：`remaining / burnRate` -> "按当前速度，5h 额度还剩 12 分钟"。
-- **冷启动**：样本不足 K 个时 ETA 显示 `--`（"数据收集中"），且不触发燃烧率类预警（尚无历史 P95 基线）。
-- **Health score（跨 quota 统一紧急度）**：windowed = `remaining / limit`；balance = ETA 健康度归一（>7 天 = 1.0，<1 天 ≈ 0）。provider 紧急度取其所有 quota 的最小值；error / stale 状态不参与排序。用于"最紧"展示模式（§8.1）与预警排序。
-- **预警触发**（macOS `UserNotifications`）：
-  1. **燃烧率突变**：当前速率 > 历史 P95 的 N 倍 -> "你正在快速烧 5h 额度"。
-  2. **ETA 临界**：5h 窗 ETA < 15min 且仍在烧 -> "5h 额度即将耗尽"。
-  3. **见底**：percent > 90% -> 轻提示。
-- **节流**：同一预警在 cooldown 内不重复推送；cooldown 状态持久化，避免重启 App 后重复轰炸。
+- **Polling interval**: per-provider configurable; default follows "shorter window, higher frequency":
+  - Volcano 5h window: 2 minutes by default (short window, fast-changing)
+  - DeepSeek balance: 5 minutes
+  - Monthly types (MiMo / OpenAI / Anthropic): 10~15 minutes
+- **Scheduling**: `PollScheduler` holds one timer per provider, **staggered** (avoid all hitting the network at the same time); refresh immediately once when the app returns to the foreground.
+- **Backoff**: exponential backoff for 429 / 5xx (max 5 attempts); failures never break the UI.
+- **Degradation**: fetch failure -> show `lastGoodReport` (local cache) + stale pulse on the ball surface; switch to error state after N consecutive failures.
+- **Cache**: local JSON stores the last successful report + a ring buffer of burn rate samples. The buffer adapts to window length: short windows (5h / 1d) keep the last ~120 raw sample points; long windows (7d / 30d / monthly) additionally maintain daily aggregated points, avoiding a "monthly ETA that actually only reflects the last day".
 
 ---
 
-## 8. 悬浮小球 UI / 动画
+## 7. Burn Rate and Alerts (directly addressing the pain point)
 
-### 8.1 多 provider 展示模型：多选小球簇 + 总面板
+- **Burn rate**: fit a slope over the recent K sample points -> `tokens/min`, `$/hour`. Adjacent sample pairs participating in the fit must satisfy two conditions: (1) **must not cross `resetsAt`** (after a window reset Used jumps back to 0; pairs crossing a reset produce a negative delta and must be discarded); (2) **the gap between adjacent `fetchedAt` < 3x the polling period** (pairs with large holes from system sleep / wake are discarded, so "waking up from a sleep" is not misjudged as blazing burn).
+- **ETA**: `remaining / burnRate` -> "at the current rate, the 5h quota has 12 minutes left".
+- **Cold start**: with fewer than K samples, ETA shows `--` ("collecting data"), and burn-rate alerts are not triggered (no historical P95 baseline yet).
+- **Health score (unified urgency across quotas)**: windowed = `remaining / limit`; balance = normalized ETA health (>7 days = 1.0, <1 day ≈ 0). A provider's urgency takes the minimum across all its quotas; error / stale states do not participate in ranking. Used for the "tightest" display mode (§8.1) and alert ordering.
+- **Alert triggers** (macOS `UserNotifications`):
+  1. **Burn rate spike**: current rate > N times the historical P95 -> "you are burning through the 5h quota fast".
+  2. **ETA critical**: 5h window ETA < 15min and still burning -> "5h quota about to run out".
+  3. **Near depletion**: percent > 90% -> gentle notice.
+- **Throttling**: the same alert is not re-pushed within its cooldown; cooldown state is persisted, avoiding a re-bombardment after restarting the app.
 
-**球面展示哪些 provider 由用户在总面板多选决定**——选中几个就在悬浮球上横向排列几个独立小球（小球簇）；每个球各自承载一个 provider 的环+核+数字，信息不丢。全部启用 provider 的轮询与预警仍在后台照常运行。
+---
 
-- **多选上球**：总面板每个 provider 卡片有“眼睛”开关，勾选即上球、取消即移除；选中数量 = 球面小球数量。选中集合持久化到 UserDefaults，重启保留。
-- **默认选择**：首次打开（未配置）默认仅选中第一个 provider（按 provider 初始化顺序，当前 = 火山）；用户调整后按其配置显示。
-- **突破徽章（alert badge）**：任一**未选中** provider 进入 fast-burn / near-depleted / depleted / error 时，簇右上角出现该 provider 主题色小圆点 + 微脉冲；点击徽章把该 provider 加入簇（冒出新球）。这是“默认只选第一个”下漏警的最后一道保险（系统通知不受影响，照常推送）。
-- **总面板**：单击球（或菜单栏图标）打开。每个启用 provider 一张卡片：环+核缩略图、各窗口百分比 + ETA、sparkline、上球开关；点卡片进入该 provider 详情页。布局与交互详见 §8.2。
+## 8. Floating Ball UI / Animation
 
-### 8.2 总面板布局：手风琴列表
+### 8.1 Multi-Provider Display Model: Multi-Select Ball Cluster + Overview Panel
 
-**窗口形态**：默认是附着在球上的瞬态 `NSPopover`（点外自动关闭，扫一眼就走）；右上角 pin 按钮可撕下成独立浮窗（`NSPanel`）常驻盯盘。宽度 ~340pt，高度随内容自适应（上限 ~70% 屏高，超出滚动）。
+**Which providers appear on the ball surface is decided by the user's multi-select in the overview panel** - each selected provider gets one independent ball arranged horizontally on the floating ball (ball cluster); each ball carries one provider's ring + core + numbers, so no information is lost. Polling and alerts for all enabled providers keep running in the background as usual.
+
+- **Multi-select onto the ball**: every provider card in the overview panel has an "eye" toggle; checking it puts the provider on the ball, unchecking removes it; the selected count = the number of balls on the surface. The selected set is persisted to UserDefaults and survives restarts.
+- **Default selection**: on first launch (unconfigured), only the first provider is selected by default (in provider initialization order, currently Volcano); after user adjustment, display follows their configuration.
+- **Breakout badge (alert badge)**: when any **unselected** provider enters fast-burn / near-depleted / depleted / error, a small dot in that provider's theme color with a subtle pulse appears at the top-right of the cluster; clicking the badge adds that provider to the cluster (a new ball pops out). This is the last line of defense against missed alerts under the "only the first selected by default" setup (system notifications are unaffected and push as usual).
+- **Overview panel**: opened by a single click on the ball (or the menu bar icon). One card per enabled provider: ring + core thumbnail, each window's percentage + ETA, sparkline, on-ball toggle; clicking a card enters that provider's detail page. Layout and interaction details in §8.2.
+
+### 8.2 Overview Panel Layout: Accordion List
+
+**Window form**: by default a transient `NSPopover` attached to the ball (auto-closes on outside click, glance and go); the pin button at the top-right can tear it off into a standalone floating window (`NSPanel`) for persistent watching. Width ~340pt, height adapts to content (capped at ~70% of screen height, scrolls beyond that).
 
 ```
 ┌─ TokenRunway ────────────── ⟳ ⚙ ┐
@@ -373,96 +373,96 @@ MiMo / OpenAI / Anthropic 暂留；OpenAI / Anthropic 大概率 bearer（用量 
 └────────────────────────────────┘
 ```
 
-**三段结构**：
+**Three-part structure**:
 
-1. **Header**（常驻）：App 名、全部刷新 ⟳、设置 ⚙、pin 📌；副标题行显示"更新于 HH:MM:SS"（数据 stale 时变黄）。
-2. **预警条**（条件出现，可多条堆叠）：仅当有活跃 fast-burn / ETA 临界 / 见底预警时显示，底色随最严重级别（黄 / 橙 / 红）；点击定位到对应 provider 卡并自动展开。无预警时完全收起、不占空间。
-3. **Provider 手风琴列表**：
-   - **排序**：按 health score（§7）升序，最紧急在最上；error / stale 不参与排序，沉底置灰。
-   - **收起态（一行，~36pt）**：icon + 名称 ｜ 最紧急 quota 标签 + 百分比（balance 型显示金额）｜ ETA ｜ 状态点（绿 / 黄 / 红 / 灰）｜ ▸。
-   - **展开态**：左侧环+核缩略图（与球同一视觉语言），右侧每个窗口一行：进度条 + percent + used/limit + ETA + reset 倒计时（`R 3h2m`）；下方一条 sparkline（最近 N 点 Used 走势，标注燃烧率 spike）；balance 型（DeepSeek）改为余额大字 + 赠送 / 充值拆分 + ETA；底部操作行：刷新 / 暂停轮询 / 设置。
-   - 手风琴**不互斥**：可同时展开多张卡；展开状态当次会话内记忆。
-   - **单击**行头展开 / 收起；**双击**行头 = 该 provider 详情面板（与球的双击手势一致）。
+1. **Header** (always present): app name, refresh all ⟳, settings ⚙, pin 📌; the subtitle line shows "updated at HH:MM:SS" (turns yellow when data is stale).
+2. **Alert bar** (conditional, multiple can stack): shown only when there are active fast-burn / ETA critical / near-depletion alerts; background color follows the most severe level (yellow / orange / red); clicking locates the corresponding provider card and auto-expands it. With no alerts it is fully collapsed and takes no space.
+3. **Provider accordion list**:
+   - **Sorting**: ascending by health score (§7), most urgent on top; error / stale do not participate in sorting, sink to the bottom grayed out.
+   - **Collapsed state (one line, ~36pt)**: icon + name | most urgent quota label + percentage (balance type shows the amount) | ETA | status dot (green / yellow / red / gray) | ▸.
+   - **Expanded state**: ring + core thumbnail on the left (same visual language as the ball), one row per window on the right: progress bar + percent + used/limit + ETA + reset countdown (`R 3h2m`); a sparkline below (recent N points of Used trend, marking burn rate spikes); balance type (DeepSeek) switches to a large balance number + granted / topped-up breakdown + ETA; action row at the bottom: refresh / pause polling / settings.
+   - The accordion is **not mutually exclusive**: multiple cards can be expanded at the same time; the expanded state is remembered within the current session.
+   - **Single click** on the row header expands / collapses; **double click** on the row header = that provider's detail panel (consistent with the ball's double-click gesture).
 
-### 8.3 形态：环 + 核（一眼月度 + 翻阅 5h）
-每个选中 provider 一个圆球（直径 ~64pt，可调），横向排成小球簇（§8.1）；单球分两层承载两个时间尺度：
+### 8.3 Form: Ring + Core (monthly at a glance + flipping through 5h)
+One ball per selected provider (diameter ~64pt, adjustable), arranged horizontally into a ball cluster (§8.1); a single ball carries two time scales in two layers:
 
-- **外环（Ring）= 月度 30d，常驻**
-  - 进度环 = 30d 已用 %，颜色随 % 绿->黄->红；慢变量、ambient。
-  - 一眼知"本月大势宽裕 / 紧张"；可在环上标"今日"刻度（当月已过天数 vs 已用 %）看是否超前。
-- **内核（Core / 液面）= 活跃窗口，默认 5h**
-  - 液面 = 活跃窗口 remaining %，颜色随 %。
-  - 呼吸 / 脉冲频率 ↔ 该窗口燃烧率（烧得越快呼吸越急）。
-  - 滚轮：内核在 `5h ↔ 7d` 间切（外环不变）。
-- **默认只显颜色**（环色 + 核色 + 核呼吸），不挤文字；hover 才显数字（`30d 62%` / `5h 73%`）。
-- **余额型（DeepSeek）**：无多窗口，环退化为单层余额球（液面 = 余额 / 观测高点 remaining/highWater，中央显 ¥余额）。
-- 互不干扰：5h 烧空但月度 OK -> 环绿、核红慢闪（"等 5h reset"）；月度将尽但 5h 新窗 -> 环红、核绿（"本月快到顶"）。
+- **Outer ring (Ring) = monthly 30d, always on**
+  - Progress ring = 30d used %, color follows % green->yellow->red; slow variable, ambient.
+  - At a glance you know "this month is comfortable / tight"; a "today" tick can be marked on the ring (days elapsed in the month vs used %) to see whether you are ahead of schedule.
+- **Inner core (Core / water line) = active window, default 5h**
+  - Water line = active window remaining %, color follows %.
+  - Breathing / pulse frequency ↔ that window's burn rate (the faster it burns, the faster the breathing).
+  - Scroll wheel: switch the core between `5h ↔ 7d` (outer ring unchanged).
+- **Color only by default** (ring color + core color + core breathing), no cramped text; numbers only on hover (`30d 62%` / `5h 73%`).
+- **Balance type (DeepSeek)**: no multiple windows; the ring degenerates into a single-layer balance ball (water line = balance / observed high point remaining/highWater, showing ¥ balance at the center).
+- Non-interfering: 5h burned out but monthly OK -> ring green, core red slow flash ("wait for the 5h reset"); month nearly gone but 5h is a fresh window -> ring red, core green ("month almost at the top").
 
-### 8.4 视觉编码（颜色 + 节奏）
+### 8.4 Visual Encoding (color + rhythm)
 
-**统一原则**：液面永远 = "健康度"（剩余时间 / 剩余额度的健康代理），windowed 与 balance 切换时视觉语言一致：
-- **timeWindowed**：液面 = remaining%，颜色随已用 percent↑ 绿->红
-- **balance（DeepSeek）**：无 limit、无 reset，液面 = `remaining / highWater`（余额相对观测高点的剩余比例；余额跳升 >10% 视为充值/刷新，重新锚定水位回满；跳崖不锚定、保持红色警告）；球中央显示余额数字 `¥42.50`，上方小字近 5h 花费 `−¥0.32`（时间窗标注在 hover 卡片），右上角货币角标与百分比型区分
-- **环与核各自着色**：外环颜色 = 月度 30d %；内核颜色 = 活跃窗口 %。两者独立 -> "环绿核红"等组合直接表达多尺度状态（如 5h 烧空但月度 OK）。
+**Unified principle**: the water line is always = "health" (a health proxy of remaining time / remaining quota), and the visual language stays consistent when switching between windowed and balance:
+- **timeWindowed**: water line = remaining %, color follows used percent↑ green->red
+- **balance (DeepSeek)**: no limit, no reset; water line = `remaining / highWater` (remaining ratio relative to the observed high point; a balance jump >10% is treated as a top-up / refresh, re-anchoring the water level back to full; a cliff drop does not re-anchor and keeps the red warning); the balance number `¥42.50` shows at the ball center, with small text above for the last 5h spend `−¥0.32` (time window annotated on the hover card), and a currency badge at the top-right to distinguish from the percentage type
+- **Ring and core each get their own color**: outer ring color = monthly 30d %; core color = active window %. The two are independent -> combinations like "green ring, red core" directly express multi-scale states (e.g. 5h burned out but monthly OK).
 
-| 状态 | 触发 | 视觉 |
+| State | Trigger | Visual |
 |---|---|---|
-| idle | 近 K 分钟无消耗 | 绿，缓慢呼吸 |
-| consuming | 正常速率消耗 | 绿->青，液面缓变 |
-| fast-burn | 燃烧率突增 | 黄，呼吸加快，球边"热气"粒子 |
-| near-depleted | windowed percent>85% / balance ETA<1天 | 橙，轻微抖动 |
-| depleted | 窗口耗尽 / 余额近 0 | 红，慢闪 |
-| error | 拉取失败 / stale | 灰，脉冲虚线 |
+| idle | No consumption in the recent K minutes | Green, slow breathing |
+| consuming | Consuming at a normal rate | Green->cyan, water line changing slowly |
+| fast-burn | Burn rate surge | Yellow, faster breathing, "hot air" particles at the ball's edge |
+| near-depleted | windowed percent>85% / balance ETA<1 day | Orange, slight jitter |
+| depleted | Window exhausted / balance near 0 | Red, slow flash |
+| error | Fetch failure / stale | Gray, pulsing dashed outline |
 
-- **呼吸频率 ↔ 燃烧率**：烧得越快呼吸越急--把"快"做成可感知的节奏，而不只是数字。
-- 液面用 `TimelineView` + `Canvas` 绘制波浪 + 微噪声。
+- **Breathing frequency ↔ burn rate**: the faster it burns, the faster the breathing - making "fast" a perceivable rhythm, not just a number.
+- The water line uses `TimelineView` + `Canvas` to draw the wave + subtle noise.
 
-### 8.5 交互（翻阅 5h）
-手势消歧后的唯一映射（每个手势只有一个含义）。簇内多球时，以下手势均作用到鼠标所在的那颗球对应的 provider：
+### 8.5 Interaction (flipping through 5h)
+The unique mapping after gesture disambiguation (each gesture has exactly one meaning). With multiple balls in the cluster, all gestures below act on the provider of the ball under the mouse:
 
-- **hover**：小 popover（provider 名 + 5h/7d/30d 三百分比 + 各自 ETA）。
-- **单击**：打开总面板（所有启用 provider 一览，见 §8.1）。
-- **双击**：展开当前 provider 详情面板：
-  - 每个窗口一行：百分比 + 已用 / 上限 + reset 倒计时。
-  - 每行一条 **sparkline 燃烧率曲线**（最近 N 个采样点 Used 走势）--这就是"翻阅 5h 使用情况"的历史，能看出"刚才那拨是不是烧得特别快"。
-- **滚轮**：内核在 `5h ↔ 7d` 间切（外环月度不变）。
-- **拖动**：移动球体；靠近屏幕边缘自动吸附并半隐为贴边小条，hover 时展开。
-- **right-click**：菜单（刷新 / 暂停轮询 / 穿透模式开关 / 打开总面板 / 打开该 provider 详情 / 从球上移除（或加入）该 provider / 隐藏球）。
-- **穿透模式**：设置 / 右键菜单可切换。开启时球体鼠标穿透、不响应任何交互，仅作 ambient 显示；默认关闭（交互模式）。
+- **hover**: small popover (provider name + the three percentages of 5h/7d/30d + each ETA).
+- **Single click**: open the overview panel (all enabled providers at a glance, see §8.1).
+- **Double click**: expand the current provider's detail panel:
+  - One row per window: percentage + used / limit + reset countdown.
+  - One **sparkline burn rate curve** per row (recent N sample points of the Used trend) - this is the history for "flipping through 5h usage", showing whether "that recent batch burned especially fast".
+- **Scroll wheel**: switch the core between `5h ↔ 7d` (monthly outer ring unchanged).
+- **Drag**: move the ball; near a screen edge it snaps and half-hides into a slim edge bar, expanding on hover.
+- **right-click**: menu (refresh / pause polling / click-through mode toggle / open overview panel / open this provider's detail / remove (or add) this provider from the ball / hide ball).
+- **Click-through mode**: toggleable in settings / the right-click menu. When enabled, the ball is mouse-transparent, responding to no interaction, purely ambient display; off by default (interactive mode).
 
-### 8.6 动画原语
-- `TimelineView(.animation)` 驱动呼吸 / 液面。
-- `matchedGeometryEffect` 在球 ↔ 详情面板间过渡。
-- `PhaseAnimator`（macOS 14+）做状态切换。
-- 粒子（热气 / 冒汗）用 `Canvas` + 简易粒子系统。
-
----
-
-## 9. 配置 UI
-
-- 左侧 provider 列表（+ 添加），右侧表单。
-- **bearer 模式**（DeepSeek/OpenAI/Anthropic）：填 Base URL + API Token，token 直接写 Keychain，不进 `TextField` 之外的 state。
-- **volcSignature 模式**（火山）：填 Base URL + AccessKey + SecretKey，AK/SK 直接写 Keychain。
-- **consoleSession 模式**（无 API 的 provider 兜底）：只预填控制台地址，配一个"登录"按钮 -> 唤起内嵌 WKWebView 完成登录；显示 session 状态。
-- 窗口定义 / 解析逻辑内置，不向用户索要额度上限等。
-- 外观：球大小、透明度、主题色、是否开机自启、内核默认窗口（5h / 7d）、上球 provider 多选（见 §8.1）、穿透模式开关。
-- menu bar：打开总面板、快速开关 provider、查看 ETA。
+### 8.6 Animation Primitives
+- `TimelineView(.animation)` drives breathing / the water line.
+- `matchedGeometryEffect` for transitions between the ball and the detail panel.
+- `PhaseAnimator` (macOS 14+) for state transitions.
+- Particles (hot air / sweating) use `Canvas` + a simple particle system.
 
 ---
 
-## 10. 安全 / Keychain
+## 9. Configuration UI
 
-- `SecretStore`：`SecItemAdd / Update / Copy` 的薄封装，`kSecClassGenericPassword`，`account = providerId`。
-- **API key**：永不落盘明文、永不进日志、永不上传第三方；仅存 Keychain。
-- **console session**：session cookie 视同密钥，仅存 WKWebView cookie store（或 Keychain 序列化），不落盘明文、不进日志；**不读取 / 不记录登录密码**（密码只在 WebView 安全上下文）；每个控制台独立 WebView + 独立 cookie，互不串扰；console 模式默认关闭，用户显式开启。
-- 网络仅经 HTTPS 直连（ATS + 证书校验），默认只指向 provider 官方域名；用户自定义 baseURL（自建 / 代理）时显式提示并确认其安全性。启用 App Sandbox（注：macOS 沙盒网络权限为布尔开关，无域名级白名单，约束靠 ATS + 代码层域名校验实现）。
-- 首次访问 Keychain 走系统授权提示。
+- Provider list on the left (+ add), form on the right.
+- **bearer mode** (DeepSeek/OpenAI/Anthropic): fill in Base URL + API Token; the token is written straight to the Keychain and never enters state beyond `TextField`.
+- **volcSignature mode** (Volcano): fill in Base URL + AccessKey + SecretKey; AK/SK written straight to the Keychain.
+- **consoleSession mode** (fallback for providers without an API): only prefill the console address, with a "Log in" button -> launch the embedded WKWebView to complete the login; show session status.
+- Window definitions / parsing logic are built in; never ask the user for quota limits.
+- Appearance: ball size, opacity, theme color, launch at login, default core window (5h / 7d), multi-select of on-ball providers (see §8.1), click-through mode toggle.
+- menu bar: open the overview panel, quickly toggle providers, view ETA.
 
 ---
 
-## 11. 项目结构
+## 10. Security / Keychain
 
-> Bundle ID：`com.wyang.tokenrunway`　｜　App 显示名：**TokenRunway**　｜　副标题：*AI token & quota monitor*
+- `SecretStore`: a thin wrapper over `SecItemAdd / Update / Copy`, `kSecClassGenericPassword`, `account = providerId`.
+- **API key**: never written to disk in plaintext, never in logs, never uploaded to third parties; stored only in the Keychain.
+- **console session**: session cookies are treated as secrets, stored only in the WKWebView cookie store (or Keychain-serialized), never in plaintext on disk, never in logs; **login passwords are never read / recorded** (passwords only live in the WebView's secure context); each console gets an independent WebView + independent cookies, never cross-contaminating; console mode is off by default and explicitly enabled by the user.
+- Network is HTTPS-only direct connection (ATS + certificate validation), defaulting to provider official domains only; when the user customizes baseURL (self-hosted / proxy), explicitly warn and confirm its safety. App Sandbox enabled (note: macOS sandbox network permission is a boolean switch with no domain-level allowlist; constraints are implemented via ATS + code-level domain validation).
+- First Keychain access goes through the system authorization prompt.
+
+---
+
+## 11. Project Structure
+
+> Bundle ID: `com.wyang.tokenrunway` | App display name: **TokenRunway** | Subtitle: *AI token & quota monitor*
 
 ```
 TokenRunway/
@@ -490,24 +490,24 @@ TokenRunway/
 
 ---
 
-## 12. 里程碑 / MVP 路线
+## 12. Milestones / MVP Roadmap
 
-- **M0 骨架**：空 app + 浮动球 + 总面板 + 假数据驱动 UI / 动画（验证视觉与交互手势）。
-- **M1 双适配器**：DeepSeek（bearer / 余额）+ 火山（volcSignature / GetAFPUsage，5h·7d·30d）跑通真数据。两者接口均已确认。
-- **M2 预测**：燃烧率 + ETA + 预警通知。
-- **M3 多 provider + 打磨**：MiMo / OpenAI / Anthropic、设置 UI、菜单栏、开机自启。
+- **M0 skeleton**: empty app + floating ball + overview panel + fake-data-driven UI / animation (validate visuals and interaction gestures).
+- **M1 dual adapters**: DeepSeek (bearer / balance) + Volcano (volcSignature / GetAFPUsage, 5h·7d·30d) running real data end-to-end. Both APIs already confirmed.
+- **M2 prediction**: burn rate + ETA + alert notifications.
+- **M3 multi-provider + polish**: MiMo / OpenAI / Anthropic, settings UI, menu bar, launch at login.
 
 ---
 
-## 13. 开放问题 / 风险
+## 13. Open Questions / Risks
 
-- ✅ **火山 5h / 周 / 月额度**：已确认有官方 OpenAPI `GetAFPUsage`（AK/SK + Volc Signature V4），一次返回 5h/日/周/月四窗口的 `Quota / Used / SubscribeTime / ResetTime`。走 `volcSignature` 模式，**无需 console 登录**。需用户填火山 AccessKey + SecretKey（IAM 凭证，非 ARK API Key）。
-  - 待验证项：用户实际套餐是否返回全部四个窗口（示例文档展示了 FiveHour / Daily，Weekly / Monthly 同结构）；AFP 是额度点数单位（非原始 token）。
-- ConsoleSession 降级为"无 API provider"的兜底（如 MiMo 若纯控制台）；火山不再需要它。
-- DeepSeek 走 bearer（余额 API 直接给 remaining）。
-- MiMo 月度窗口是自然月还是 30 天滚动，待核实。
-- OpenAI / Anthropic 用量 API 粒度是否足够细（若仅 per-day，对"5h 窗"无效，需 provider 自带窗口）。
-- ~~macOS 最低版本~~ 已定：**macOS 14+**（`PhaseAnimator` 直接用；2026 年该基数合理）。
-- 火山管控面 OpenAPI 自身限流：GetAFPUsage 按 2min 轮询 ≈ 720 次/天，需确认在调用配额内。
-- DeepSeek `granted_balance`（赠送额度）可能到期归零 -> 余额"跳崖"；ETA 外推需识别此类非消耗性突变并重置燃烧率基线。
-- 通知权限申请时机。
+- ✅ **Volcano 5h / weekly / monthly quota**: confirmed official OpenAPI `GetAFPUsage` (AK/SK + Volc Signature V4), returning `Quota / Used / SubscribeTime / ResetTime` for the four windows 5h/day/week/month in one call. Uses `volcSignature` mode, **no console login needed**. Requires the user's Volcano AccessKey + SecretKey (IAM credentials, not ARK API Key).
+  - To verify: whether the user's actual plan returns all four windows (the sample doc shows FiveHour / Daily; Weekly / Monthly share the same structure); AFP is a quota point unit (not raw tokens).
+- ConsoleSession is demoted to the fallback for "providers without an API" (e.g. MiMo if it is console-only); Volcano no longer needs it.
+- DeepSeek goes bearer (the balance API gives remaining directly).
+- Whether MiMo's monthly window is a calendar month or a 30-day rolling one, to be verified.
+- Whether OpenAI / Anthropic usage API granularity is fine enough (if per-day only, it does not serve the "5h window"; the provider would need its own windows).
+- ~~Minimum macOS version~~ decided: **macOS 14+** (`PhaseAnimator` usable directly; a reasonable base in 2026).
+- Volcano control-plane OpenAPI rate limits itself: GetAFPUsage polled every 2min ≈ 720 calls/day; need to confirm it stays within the call quota.
+- DeepSeek `granted_balance` (granted balance) may expire to zero -> the balance "cliff-drops"; ETA extrapolation must recognize such non-consumption mutations and reset the burn rate baseline.
+- Notification permission request timing.
