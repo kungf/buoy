@@ -2,12 +2,13 @@ import SwiftUI
 import TokenRunwayCore
 
 /// Floating ball rendered from `BallModel` (DESIGN.md §8.3 form / §8.4 visual encoding / §8.6 animation).
-/// Outer ring = longest window used (30d ambient); middle ring = 7d used; core liquid = active
-/// window used / balance ETA health. Each channel is colored by its OWN remaining health
-/// (green -> orange -> red), never by `state`. State drives animation only:
-/// breathing / slow-blink / dashed pulse / heat particles. (The near-depleted shake was removed
-/// because it triggered on merely-low windows like 7d @ 85% used and read as jitter, not signal —
-/// color already communicates urgency.)
+/// Outer ring = longest window used (30d ambient); middle ring = 7d used — both used-progress.
+/// Core liquid = REMAINING water level (windowed: 1−used; balance: remaining/highWater), so
+/// full = healthy and the water drains as you consume, consistently across providers.
+/// Each channel is colored by its OWN remaining health (green -> orange -> red), never by
+/// `state`. State drives animation only: breathing / slow-blink / dashed pulse / heat particles.
+/// (The near-depleted shake was removed because it triggered on merely-low windows like 7d
+/// @ 85% used and read as jitter, not signal — color already communicates urgency.)
 struct BallView: View {
     let model: BallModel
     /// Which provider this ball represents; drives the bottom nameplate short code.
