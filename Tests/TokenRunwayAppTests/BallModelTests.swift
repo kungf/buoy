@@ -147,4 +147,108 @@ final class BallModelTests: XCTestCase {
         XCTAssertEqual(model.spentRecentText, "--")
         XCTAssertEqual(model.coreLevel ?? -1, 1.0, accuracy: 1e-9)
     }
+
+    // MARK: Kimi ball hierarchy (regression)
+
+    func test_kimiBall_mirrorsVolcanoHierarchy() {
+        // Kimi: weekly 7d (longest) + 300m rate window (shortest). The ball must mirror
+        // Volcano's hierarchy — longest window on the outer ring, shortest (most immediate)
+        // in the core — not the old order-dependent assignment (report order [7d, rate]
+        // made the 7d the core and the 5h rate window the outer ring).
+        let store = UsageStore()
+        let now = Date()
+        func quota(id: String, label: String, used: Double, limit: Double,
+                   windowHours: Double) -> Quota {
+            Quota(id: id, type: .timeWindowed, label: label, unit: .credits,
+                  used: used, limit: limit,
+                  windowStart: now.addingTimeInterval(-windowHours * 3600),
+                  resetsAt: now.addingTimeInterval(3600))
+        }
+        store.installDemoReport(ProviderReport(
+            providerId: "kimi", fetchedAt: now,
+            quotas: [
+                quota(id: "kimi.7d", label: "每周额度", used: 30, limit: 100, windowHours: 24 * 7),
+                quota(id: "kimi.rate.300m", label: "限流窗", used: 40, limit: 60, windowHours: 5),
+            ]))
+
+        let model = store.ballModel(for: "kimi")
+        XCTAssertEqual(model.mode, .windowed)
+        XCTAssertEqual(model.ringUsed ?? -1, 0.30, accuracy: 1e-9)             // outer = 7d weekly
+        XCTAssertNil(model.midRingUsed)                                        // no third tier
+        XCTAssertEqual(model.coreLevel ?? -1, 1 - 40.0 / 60.0, accuracy: 1e-9) // core = 5h rate window
+        XCTAssertEqual(model.centerText, "33%")
+        XCTAssertEqual(model.subText, "300m")
+    }
+
+    /// Selection is by window length, not report order: reversing the quota order must not
+    /// change which window lands on the ring and which in the core.
+    func test_kimiBall_orderIndependent() {
+        let store = UsageStore()
+        let now = Date()
+        func quota(id: String, label: String, used: Double, limit: Double,
+                   windowHours: Double) -> Quota {
+            Quota(id: id, type: .timeWindowed, label: label, unit: .credits,
+                  used: used, limit: limit,
+                  windowStart: now.addingTimeInterval(-windowHours * 3600),
+                  resetsAt: now.addingTimeInterval(3600))
+        }
+        store.installDemoReport(ProviderReport(
+            providerId: "kimi", fetchedAt: now,
+            quotas: [
+                // rate window FIRST, weekly second — opposite of the wire format
+                quota(id: "kimi.rate.300m", label: "限流窗", used: 40, limit: 60, windowHours: 5),
+                quota(id: "kimi.7d", label: "每周额度", used: 30, limit: 100, windowHours: 24 * 7),
+            ]))
+
+        let model = store.ballModel(for: "kimi")
+        XCTAssertEqual(model.ringUsed ?? -1, 0.30, accuracy: 1e-9)
+        XCTAssertEqual(model.coreLevel ?? -1, 1 - 40.0 / 60.0, accuracy: 1e-9)
+    }
+
+    /// A user-cycled core (coreQuotaIds) must beat the default shortest-window selection.
+    func test_kimiBall_cycleOverrideBeatsShortestSelection() {
+        let store = UsageStore()
+        let now = Date()
+        func quota(id: String, label: String, used: Double, limit: Double,
+                   windowHours: Double) -> Quota {
+            Quota(id: id, type: .timeWindowed, label: label, unit: .credits,
+                  used: used, limit: limit,
+                  windowStart: now.addingTimeInterval(-windowHours * 3600),
+                  resetsAt: now.addingTimeInterval(3600))
+        }
+        store.installDemoReport(ProviderReport(
+            providerId: "kimi", fetchedAt: now,
+            quotas: [
+                quota(id: "kimi.7d", label: "每周额度", used: 30, limit: 100, windowHours: 24 * 7),
+                quota(id: "kimi.rate.300m", label: "限流窗", used: 40, limit: 60, windowHours: 5),
+            ]))
+
+        store.cycleCoreWindow(forward: true, for: "kimi") // rate -> 7d (report order)
+        XCTAssertEqual(store.coreQuota(for: "kimi")?.id, "kimi.7d")
+        // With the weekly in the core, the 5h rate window moves to the middle ring
+        // (same behavior as Volcano when its core is cycled off the 5h).
+        XCTAssertEqual(store.midRingQuota(for: "kimi")?.id, "kimi.rate.300m")
+        let model = store.ballModel(for: "kimi")
+        XCTAssertEqual(model.centerText, "70%") // weekly 30% used -> 70% remaining
+        store.cycleCoreWindow(forward: true, for: "kimi") // 7d -> rate
+        XCTAssertEqual(store.coreQuota(for: "kimi")?.id, "kimi.rate.300m")
+    }
+
+    /// A single windowed quota: ring, core and the sole quota coincide, no middle ring.
+    func test_singleWindowedQuota_ringAndCoreCoincide() {
+        let store = UsageStore()
+        let now = Date()
+        store.installDemoReport(ProviderReport(
+            providerId: "minimal", fetchedAt: now,
+            quotas: [Quota(id: "minimal.5h", type: .timeWindowed, label: "5 小时额度",
+                           unit: .credits, used: 30, limit: 100,
+                           windowStart: now.addingTimeInterval(-2 * 3600),
+                           resetsAt: now.addingTimeInterval(3 * 3600))]))
+        let model = store.ballModel(for: "minimal")
+        XCTAssertEqual(model.ringUsed ?? -1, 0.30, accuracy: 1e-9)
+        XCTAssertNil(model.midRingUsed)
+        XCTAssertEqual(model.coreLevel ?? -1, 0.70, accuracy: 1e-9)
+        XCTAssertEqual(model.centerText, "70%")
+        XCTAssertEqual(model.subText, "5h")
+    }
 }

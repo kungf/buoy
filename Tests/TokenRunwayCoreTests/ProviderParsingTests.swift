@@ -69,6 +69,33 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertEqual(fiveHour.unit, .credits)
     }
 
+    /// windowStart 必须 = resetsAt − 窗口期长（而不是 SubscribeTime）：窗口时长
+    /// （resetsAt−windowStart）驱动环/核的时长排序与预期消耗速率（limit/时长），
+    /// 用订阅起始时间会让时长变成"订阅年龄 + 距下次 reset"，随相位漂移。
+    func testVolcanoWindowStartDerivedFromResetNotSubscribeTime() throws {
+        // Arrange：SubscribeTime 在 reset 前 30 天（订阅已久），与 5h 窗口期长无关
+        let json = """
+        {
+          "ResponseMetadata": {},
+          "Result": {
+            "PlanType": "Large",
+            "AFPFiveHour": {"Quota": 50.0, "Used": 12.5, "SubscribeTime": 1777939200000, "ResetTime": 1778806800000},
+            "AFPWeekly":  {"Quota": 0, "Used": 0, "SubscribeTime": 0, "ResetTime": 0},
+            "AFPMonthly": {"Quota": 0, "Used": 0, "SubscribeTime": 0, "ResetTime": 0}
+          }
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try VolcanoProvider.parse(data: json)
+
+        // Assert
+        let fiveHour = report.quotas[0]
+        XCTAssertEqual(fiveHour.resetsAt!.timeIntervalSince(fiveHour.windowStart!), 5 * 3600,
+                       accuracy: 1e-9)
+        XCTAssertNotEqual(fiveHour.windowStart, Date(timeIntervalSince1970: 1_777_939_200))
+    }
+
     func testVolcanoSkipsZeroQuotaWindows() throws {
         // Arrange：Weekly/Monthly Quota=0 = 未开通（DESIGN.md §5.2）
         let json = """

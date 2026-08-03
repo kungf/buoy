@@ -228,23 +228,46 @@ final class UsageStore: ObservableObject {
         reports.first { $0.providerId == providerId }
     }
 
-    /// Outer ring = longest window (30d preferred)
+    /// Outer ring = longest window (30d preferred; otherwise max by window length).
+    /// Volcano: 30d. Kimi: 7d weekly — the old `windowed.last` fallback put Kimi's SHORTEST
+    /// window (the 300m rate window) on the outside, inverting the hierarchy.
+    /// Durations are exact: providers set `windowStart = resetsAt − period` (Kimi, Volcano).
     func ringQuota(for providerId: String) -> Quota? {
         guard let report = report(for: providerId) else { return nil }
         let windowed = report.quotas.filter { $0.type == .timeWindowed }
-        return windowed.first { $0.id.hasSuffix(".30d") } ?? windowed.last
+        if let preferred = windowed.first(where: { $0.id.hasSuffix(".30d") }) { return preferred }
+        return Self.longestWindow(windowed) ?? windowed.last
     }
 
-    /// Core = the provider's active window (coreQuotaIds or first windowed). For balance-only
-    /// providers (no windowed quotas), falls back to the balance quota so the core liquid renders.
+    /// Core = the provider's active window (coreQuotaIds, else the SHORTEST window — the most
+    /// immediate tier, mirroring Volcano's 5h core; the old "first windowed" made Kimi's 7d
+    /// weekly — its LONGEST window — the core while the 5h rate window became the outer ring).
+    /// For balance-only providers (no windowed quotas), falls back to the balance quota so the
+    /// core liquid renders.
     func coreQuota(for providerId: String) -> Quota? {
         guard let report = report(for: providerId) else { return nil }
         let windowed = report.quotas.filter { $0.type == .timeWindowed }
         if let id = coreQuotaIds[providerId] {
-            return windowed.first { $0.id == id } ?? windowed.first
+            return windowed.first { $0.id == id } ?? Self.shortestWindow(windowed)
         }
-        if let first = windowed.first { return first }
-        return report.quotas.first { $0.type == .balance }
+        return Self.shortestWindow(windowed) ?? report.quotas.first { $0.type == .balance }
+    }
+
+    /// Longest window among those with a known duration (windowDuration > 0); when no duration
+    /// is known, falls back to report order — same rule for ring/mid/core, in one place.
+    private static func longestWindow(_ quotas: [Quota]) -> Quota? {
+        knownDuration(quotas).max { windowDuration($0) < windowDuration($1) }
+    }
+
+    /// Shortest window (the most immediate tier) among those with a known duration; falls back
+    /// to report order when no duration is known.
+    private static func shortestWindow(_ quotas: [Quota]) -> Quota? {
+        knownDuration(quotas).min { windowDuration($0) < windowDuration($1) }
+    }
+
+    private static func knownDuration(_ quotas: [Quota]) -> [Quota] {
+        let known = quotas.filter { windowDuration($0) > 0 }
+        return known.isEmpty ? quotas : known
     }
 
     /// Middle ring = the windowed quota that is neither the outer ring nor the core, preferring the
