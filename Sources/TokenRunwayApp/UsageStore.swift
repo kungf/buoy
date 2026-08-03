@@ -6,7 +6,7 @@ import TokenRunwayCore
 @MainActor
 final class UsageStore: ObservableObject {
     @Published private(set) var reports: [ProviderReport] = []
-    @Published private(set) var providerErrors: [String: String] = [:]
+    @Published var providerErrors: [String: String] = [:]
     @Published private(set) var isRefreshing = false
 
     // MARK: Display state (DESIGN.md §8.1 multi-select ball cluster)
@@ -118,6 +118,7 @@ final class UsageStore: ObservableObject {
             providerErrors[id] = nil
             consecutiveFailures[id] = 0
             saveCache()
+            autoSwitchIfNeeded()
         } catch {
             consecutiveFailures[id] = (consecutiveFailures[id] ?? 0) + 1
             providerErrors[id] = Self.describe(error)
@@ -202,6 +203,21 @@ final class UsageStore: ObservableObject {
     private func applySelection(_ state: SelectionState) {
         selectedProviderIds = state.selectedIds
         persistSelection()
+    }
+
+    /// If all selected providers are unconfigured and at least one other provider has data,
+    /// auto-switch to the first provider with data. Called after each successful fetch so
+    /// the ball transitions from "no key" to showing real data without manual intervention.
+    func autoSwitchIfNeeded() {
+        guard !selectedProviderIds.isEmpty else { return }
+        let allSelectedUnconfigured = selectedProviderIds.allSatisfy {
+            providerErrors[$0] == Self.notConfiguredError
+        }
+        guard allSelectedUnconfigured else { return }
+        guard let firstWithData = providerOrder.first(where: { id in
+            reports.contains(where: { $0.providerId == id })
+        }) else { return }
+        applySelection(SelectionState(selectedIds: [firstWithData], providerOrder: providerOrder))
     }
 
     private func loadSelection() {
