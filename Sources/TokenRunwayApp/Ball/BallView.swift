@@ -15,29 +15,47 @@ struct BallView: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            // urgency 0 -> ~2.4s calm period; 1 -> ~0.7s urgent, larger amplitude
-            let period = max(2.4 - 1.7 * model.breathUrgency, 0.5)
-            let amplitude = 0.025 + 0.02 * model.breathUrgency
-            let breathe = 1 + amplitude * sin(time * .pi / period)
-
-            ZStack {
-                ringLayer(time: time)
-                midRingLayer()
-                coreLayer(phase: time * 1.8)
-                centerTextLayer
-                badgeLayer(time: time)
-                if model.state == .fastBurn {
-                    HeatParticles(phase: time)
-                }
-            }
-            .scaleEffect(breathe)
-            .opacity(displayOpacity(time))
-            // Ball content is sized to `ballSize`; the outer canvas frame (`canvasSize`) centers
-            // it and leaves margin so the ring stroke / breathing are not clipped by the
-            // square panel (fixes "ball looks cropped on all sides").
-            .frame(width: Theme.ballSize, height: Theme.ballSize)
+            BallScene(model: model,
+                      providerId: providerId,
+                      time: context.date.timeIntervalSinceReferenceDate)
         }
+    }
+}
+
+/// Ball scene driven by an explicit `time` (seconds since an arbitrary reference).
+/// `BallView` feeds it the wall clock via `TimelineView`; the GIF renderer (`GifRenderer`)
+/// feeds it a deterministic time sequence so generated animations match the live ball exactly.
+/// The scene owns everything time-dependent (breathing scale, liquid wave phase, badge pulse,
+/// blink opacity) plus the static chrome (currency badge, provider nameplate).
+struct BallScene: View {
+    let model: BallModel
+    /// Which provider this ball represents; drives the bottom nameplate short code.
+    let providerId: String
+    /// Animation clock, seconds since an arbitrary reference point.
+    let time: Double
+
+    var body: some View {
+        // urgency 0 -> ~2.4s calm period; 1 -> ~0.7s urgent, larger amplitude
+        let period = max(2.4 - 1.7 * model.breathUrgency, 0.5)
+        let amplitude = 0.025 + 0.02 * model.breathUrgency
+        let breathe = 1 + amplitude * sin(time * .pi / period)
+
+        ZStack {
+            ringLayer(time: time)
+            midRingLayer()
+            coreLayer(phase: time * 1.8)
+            centerTextLayer
+            badgeLayer(time: time)
+            if model.state == .fastBurn {
+                HeatParticles(phase: time)
+            }
+        }
+        .scaleEffect(breathe)
+        .opacity(displayOpacity(time))
+        // Ball content is sized to `ballSize`; the outer canvas frame (`canvasSize`) centers
+        // it and leaves margin so the ring stroke / breathing are not clipped by the
+        // square panel (fixes "ball looks cropped on all sides").
+        .frame(width: Theme.ballSize, height: Theme.ballSize)
         .frame(width: Theme.canvasSize, height: Theme.canvasSize)
         .overlay(alignment: .topTrailing) {
             if let badge = model.currencyBadge {

@@ -472,6 +472,12 @@ final class UsageStore: ObservableObject {
 
     // MARK: - Mock scenarios (TRWY_MOCK env var, for visual testing)
 
+    /// Install a single hand-built report (used by the GIF/snapshot renderers, which need
+    /// fixed data that the named scenarios do not cover).
+    func installDemoReport(_ report: ProviderReport) {
+        reports = [report]
+    }
+
     /// Scenarios: critical 5h 95% red / warning 45% orange / healthy 10% green /
     /// exhausted drained / mixed ring-hot core-cool / balance-critical balance running out /
     /// default = healthy
