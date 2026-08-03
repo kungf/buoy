@@ -16,6 +16,8 @@ public enum BallState: String, Sendable, Equatable {
     case error
     /// 未配置凭证：不报警，平静显示"需配置"
     case notConfigured
+    /// 订阅型套餐已过期（如 MiMo Token Plan）：灰暗显示，提示续费
+    case expired
 }
 
 /// 纯函数状态解析（与 HealthScore 同层，可单测；DESIGN.md §8.4）。

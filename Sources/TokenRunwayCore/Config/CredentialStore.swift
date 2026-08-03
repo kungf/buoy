@@ -1,7 +1,8 @@
 import Foundation
 
 /// ~/.trwy/config.json 的单 provider 条目。字段按 auth 模式取用：
-/// bearer → token；volcSignature → ak/sk；apiKey/baseURL 保留给推理类接口。
+/// bearer → token；volcSignature → ak/sk；consoleSession → cookieToken/cookieUserId；
+/// apiKey/baseURL 保留给推理类接口。
 public struct ProviderCredentials: Codable, Sendable, Equatable {
     public var auth: String?
     public var token: String?
@@ -9,15 +10,21 @@ public struct ProviderCredentials: Codable, Sendable, Equatable {
     public var sk: String?
     public var apiKey: String?
     public var baseURL: String?
+    /// consoleSession：浏览器 SSO 会话 cookie（如 MiMo 的 api-platform_serviceToken / userId）
+    public var cookieToken: String?
+    public var cookieUserId: String?
 
     public init(auth: String? = nil, token: String? = nil, ak: String? = nil,
-                sk: String? = nil, apiKey: String? = nil, baseURL: String? = nil) {
+                sk: String? = nil, apiKey: String? = nil, baseURL: String? = nil,
+                cookieToken: String? = nil, cookieUserId: String? = nil) {
         self.auth = auth
         self.token = token
         self.ak = ak
         self.sk = sk
         self.apiKey = apiKey
         self.baseURL = baseURL
+        self.cookieToken = cookieToken
+        self.cookieUserId = cookieUserId
     }
 }
 
@@ -53,7 +60,8 @@ public enum CredentialStore {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    /// 条目 → 统一 Credential。ak/sk 齐备优先 volcAccessKey，其次 bearer token。
+    /// 条目 → 统一 Credential。ak/sk 齐备优先 volcAccessKey，其次 bearer token，
+    /// 其次 consoleSession 会话 cookie。
     public static func credential(for providerId: String, from config: TokenRunwayConfigFile?) -> Credential? {
         guard let entry = config?.providers[providerId] else { return nil }
         if let ak = entry.ak, let sk = entry.sk, !ak.isEmpty, !sk.isEmpty {
@@ -61,6 +69,10 @@ public enum CredentialStore {
         }
         if let token = entry.token, !token.isEmpty {
             return .bearer(token)
+        }
+        if let serviceToken = entry.cookieToken, let userId = entry.cookieUserId,
+           !serviceToken.isEmpty, !userId.isEmpty {
+            return .sessionCookies(serviceToken: serviceToken, userId: userId)
         }
         return nil
     }
