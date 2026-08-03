@@ -101,4 +101,191 @@ final class ProviderParsingTests: XCTestCase {
             }
         }
     }
+
+    // MARK: Kimi
+
+    /// 真实响应样例（已脱敏）：每周配额 + 300 分钟限流窗 + 加油包 disabled
+    func testKimiParsesWeeklyAndRateWindow() throws {
+        // Arrange
+        let json = """
+        {
+          "user": {"userId": "xxx", "region": "REGION_CN", "membership": {"level": "LEVEL_INTERMEDIATE"}},
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": [
+            {"window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+             "detail": {"limit": "100", "used": "12", "remaining": "88", "resetTime": "2026-08-02T01:45:09.020360Z"}}
+          ],
+          "boosterWallet": {"status": "STATUS_DISABLED", "monthlyChargeLimit": {"currency": "CNY", "priceInCents": "10000"}, "monthlyUsed": {"currency": "CNY", "priceInCents": "0"}},
+          "subType": "TYPE_PURCHASE"
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.providerId, "kimi")
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d", "kimi.rate.300m"])
+
+        let weekly = report.quotas[0]
+        XCTAssertEqual(weekly.type, .timeWindowed)
+        XCTAssertEqual(weekly.used, 51)
+        XCTAssertEqual(weekly.limit, 100)
+        XCTAssertEqual(weekly.effectiveRemaining, 49)
+        XCTAssertEqual(weekly.percentUsed, 0.51)
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 8; comps.day = 7
+        comps.hour = 5; comps.minute = 45; comps.second = 9
+        comps.timeZone = TimeZone(identifier: "UTC")
+        let expectedReset = Calendar(identifier: .gregorian).date(from: comps)!
+        XCTAssertEqual(weekly.resetsAt!.timeIntervalSince1970, expectedReset.timeIntervalSince1970, accuracy: 0.1)
+        XCTAssertEqual(weekly.windowStart!.timeIntervalSince1970,
+                       expectedReset.timeIntervalSince1970 - 7 * 24 * 3600, accuracy: 0.1)
+
+        let rate = report.quotas[1]
+        XCTAssertEqual(rate.type, .timeWindowed)
+        XCTAssertEqual(rate.label, "5 小时限流窗")
+        XCTAssertEqual(rate.used, 12)
+        XCTAssertEqual(rate.limit, 100)
+        XCTAssertEqual(rate.resetsAt!.timeIntervalSince1970 - rate.windowStart!.timeIntervalSince1970,
+                       300 * 60, accuracy: 0.01)
+    }
+
+    /// boosterWallet STATUS_ENABLED 时映射为 balance 型（priceInCents 为分，转 CNY）
+    func testKimiParsesBoosterWalletWhenEnabled() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": [],
+          "boosterWallet": {"status": "STATUS_ENABLED", "monthlyChargeLimit": {"currency": "CNY", "priceInCents": "10000"}, "monthlyUsed": {"currency": "CNY", "priceInCents": "2500"}}
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d", "kimi.booster"])
+        let booster = report.quotas[1]
+        XCTAssertEqual(booster.type, .balance)
+        XCTAssertEqual(booster.unit, .cny)
+        XCTAssertEqual(booster.limit, 100)
+        XCTAssertEqual(booster.used, 25)
+        XCTAssertEqual(booster.effectiveRemaining, 75)
+    }
+
+    /// limits 为空数组时只产出每周配额
+    func testKimiParsesEmptyLimits() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": []
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d"])
+    }
+
+    /// 解析错误只暴露错误码，不透传服务端自由文本（SKILL.md / DESIGN.md §10）
+    func testKimiErrorExposesOnlyCodeNotFreeText() {
+        // Arrange
+        let json = """
+        {"error": {"code": "UNAUTHENTICATED", "message": "internal token detail must not leak"}}
+        """.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try KimiProvider.parse(data: json)) { error in
+            guard case ProviderError.parse(let msg) = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+            XCTAssertTrue(msg.contains("UNAUTHENTICATED"), "should expose the error code: \(msg)")
+            XCTAssertFalse(msg.contains("internal token detail"), "must not leak server free text: \(msg)")
+        }
+    }
+
+    /// resetTime 不带小数秒：兜底 formatter 解析（.withFractionalSeconds 会把小数秒变成必需）
+    func testKimiParsesResetTimeWithoutFractionalSeconds() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09Z"},
+          "limits": []
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d"])
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 8; comps.day = 7
+        comps.hour = 5; comps.minute = 45; comps.second = 9
+        comps.timeZone = TimeZone(identifier: "UTC")
+        let expected = Calendar(identifier: .gregorian).date(from: comps)!
+        XCTAssertEqual(report.quotas[0].resetsAt!.timeIntervalSince1970,
+                       expected.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// usage 存在但全部字段非法：抛 parse 错误，让响应结构变更大声暴露（而非静默空 report）
+    func testKimiThrowsWhenUsagePresentButNothingParsed() {
+        // Arrange
+        let json = """
+        {"usage": {"limit": "abc", "used": "??", "remaining": "49", "resetTime": "not-a-date"}, "limits": []}
+        """.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try KimiProvider.parse(data: json)) { error in
+            guard case ProviderError.parse = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+        }
+    }
+
+    /// USD 加油包：按 currency 映射为 .usd，不假定 CNY
+    func testKimiParsesUSDBoosterWallet() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": [],
+          "boosterWallet": {"status": "STATUS_ENABLED", "monthlyChargeLimit": {"currency": "USD", "priceInCents": "10000"}, "monthlyUsed": {"currency": "USD", "priceInCents": "2500"}}
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d", "kimi.booster"])
+        let booster = report.quotas[1]
+        XCTAssertEqual(booster.unit, .usd)
+        XCTAssertEqual(booster.limit, 100)
+        XCTAssertEqual(booster.used, 25)
+        XCTAssertEqual(booster.effectiveRemaining, 75)
+    }
+
+    /// 未知币种的加油包：跳过该 quota（不假定 CNY），其余 quota 不受影响
+    func testKimiSkipsBoosterWalletWithUnknownCurrency() throws {
+        // Arrange
+        let json = """
+        {
+          "usage": {"limit": "100", "used": "51", "remaining": "49", "resetTime": "2026-08-07T05:45:09.020360Z"},
+          "limits": [],
+          "boosterWallet": {"status": "STATUS_ENABLED", "monthlyChargeLimit": {"currency": "EUR", "priceInCents": "10000"}, "monthlyUsed": {"currency": "EUR", "priceInCents": "0"}}
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try KimiProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d"])
+    }
 }

@@ -17,7 +17,7 @@ struct LiquidShape: Shape {
             path.move(to: CGPoint(x: 0, y: surfaceY))
             var x: CGFloat = 0
             while x <= rect.width {
-                let angle = (x / wavelength) * 2 * .pi + phase
+                let angle = Double(x / wavelength) * 2 * .pi + phase
                 let y = surfaceY + amplitude * sin(angle)
                 path.addLine(to: CGPoint(x: x, y: y))
                 x += 2

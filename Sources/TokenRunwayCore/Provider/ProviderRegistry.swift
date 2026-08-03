@@ -7,6 +7,7 @@ public enum ProviderRegistry {
     public static let all: [any Provider] = [
         VolcanoProvider(),
         DeepSeekProvider(),
+        KimiProvider(),
     ]
 
     public static var ids: [String] { all.map { $0.manifest.id } }

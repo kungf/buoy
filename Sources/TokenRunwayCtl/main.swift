@@ -26,6 +26,9 @@ func envCredential(for provider: any Provider) -> Credential? {
         }
     case .consoleSession:
         break
+    case .localCLI:
+        // 无 env 变量：登录态直接来自本机 CLI 凭证文件
+        break
     }
     return nil
 }
@@ -36,11 +39,15 @@ func envHint(for provider: any Provider) -> String {
     case .bearer: return "env \(prefix)TOKEN"
     case .volcSignature: return "env \(prefix)AK / \(prefix)SK"
     case .consoleSession: return "console session"
+    case .localCLI: return "local \(provider.manifest.displayName) CLI login (~/.kimi-code)"
     }
 }
 
 func credential(for provider: any Provider, config: TokenRunwayConfigFile?) -> Credential? {
-    envCredential(for: provider) ?? CredentialStore.credential(for: provider.manifest.id, from: config)
+    if provider.manifest.authMode == .localCLI {
+        return CredentialStore.localCLICredential()
+    }
+    return envCredential(for: provider) ?? CredentialStore.credential(for: provider.manifest.id, from: config)
 }
 
 func printReport(_ report: ProviderReport) {

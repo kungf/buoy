@@ -8,12 +8,16 @@ public enum AuthMode: String, Codable, Sendable {
     case volcSignature
     /// 控制台浏览器登录态，经内嵌 WKWebView（无 API 的 provider 兜底）
     case consoleSession
+    /// 复用本机 CLI 的 OAuth 登录态（读 CLI 凭证文件，如 Kimi Code；无需用户手填）
+    case localCLI
 }
 
 /// 凭证（注入式，适配器不持有；真实存储在 Keychain，见 DESIGN.md §10）
 public enum Credential: Sendable {
     case bearer(String)
     case volcAccessKey(ak: String, sk: String)
+    /// localCLI 模式：指向本机 CLI 的凭证根目录（如 ~/.kimi-code），由适配器自行读取/刷新
+    case localOAuth(home: String)
 }
 
 /// 永不泄露明文：任何 print()/String(describing:) 只看到前 4 字符 + 长度（DESIGN.md §10 密钥零落盘）。
@@ -24,6 +28,8 @@ extension Credential: CustomStringConvertible {
             return "bearer(\(token.prefix(4))…\(token.count) chars)"
         case .volcAccessKey(let ak, let sk):
             return "volcAccessKey(ak: \(ak.prefix(4))…, sk: \(sk.prefix(4))…)"
+        case .localOAuth(let home):
+            return "localOAuth(home: \(home.prefix(4))…\(home.count) chars)"
         }
     }
 }
