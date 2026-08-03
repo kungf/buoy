@@ -44,7 +44,7 @@ extension ProviderTheme {
 
     /// Short ASCII code for the ball nameplate (locale-independent: unaffected by `displayName`,
     /// which may be localized). Precedence: known provider -> `manifest.shortName`; otherwise
-    /// id <= 4 chars -> shown in full; longer unknown id -> first 3 chars. Keeps the 88pt ball
+    /// id <= 4 chars -> shown in full; longer unknown id -> first 4 chars. Keeps the 88pt ball
     /// readable (DESIGN.md §8.3).
     static func shortName(for id: String) -> String {
         let lower = id.lowercased()
@@ -52,7 +52,7 @@ extension ProviderTheme {
             return sn
         }
         if lower.count <= 4 { return lower }
-        return String(lower.prefix(3))
+        return String(lower.prefix(4))
     }
 }
 

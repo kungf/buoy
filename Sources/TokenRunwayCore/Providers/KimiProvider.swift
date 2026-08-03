@@ -11,7 +11,7 @@ public struct KimiProvider: Provider {
         defaultBaseURL: "https://api.kimi.com",
         allowsBaseURLOverride: false,
         defaultPollInterval: 300,
-        shortName: "km",
+        shortName: "kimi",
         consoleURL: "https://www.kimi.com/membership/subscription?tab=quota",
         logoName: "kimi_logo",
         themeColor: .indigo
