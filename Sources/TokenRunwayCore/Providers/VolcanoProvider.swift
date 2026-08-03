@@ -108,15 +108,20 @@ public struct VolcanoProvider: Provider {
         }
 
         // 每日窗口不展示：多数套餐无实际每日限额（AFPDaily 字段常为占位值），按产品决策移除
-        let windows: [(id: String, label: String, dto: WindowDTO?)] = [
-            ("volcano.5h", "5 小时额度", result.AFPFiveHour),
-            ("volcano.7d", "每周额度", result.AFPWeekly),
-            ("volcano.30d", "每月额度", result.AFPMonthly),
+        // DTO 名称即窗口期长（AFPFiveHour=5h / AFPWeekly=7d / AFPMonthly=30d）。
+        let windows: [(id: String, label: String, period: TimeInterval, dto: WindowDTO?)] = [
+            ("volcano.5h", "5 小时额度", 5 * 3600, result.AFPFiveHour),
+            ("volcano.7d", "每周额度", 7 * 86400, result.AFPWeekly),
+            ("volcano.30d", "每月额度", 30 * 86400, result.AFPMonthly),
         ]
 
-        // Quota=0 = 该套餐未开通此窗口 -> 不生成 Quota（DESIGN.md §5.2，避免除零与误导性 0%）
-        let quotas: [Quota] = windows.compactMap { id, label, dto in
+        // Quota=0 = 该套餐未开通此窗口 -> 不生成 Quota（DESIGN.md §5.2，避免除零与误导性 0%）。
+        // windowStart 用 `resetsAt − 窗口期长` 而非 SubscribeTime：窗口时长（resetsAt−windowStart）
+        // 驱动环/核的时长排序与预期消耗速率（limit/时长）；用订阅起始时间会让时长变成
+        // "订阅年龄 + 距下次 reset"，随相位漂移，破坏 5h/7d/30d 的最短/最长排序。
+        let quotas: [Quota] = windows.compactMap { id, label, period, dto in
             guard let dto, dto.Quota > 0 else { return nil }
+            let resetsAt = Date(timeIntervalSince1970: dto.ResetTime / 1000)
             return Quota(
                 id: id,
                 type: .timeWindowed,
@@ -124,8 +129,8 @@ public struct VolcanoProvider: Provider {
                 unit: .credits,
                 used: dto.Used,
                 limit: dto.Quota,
-                windowStart: Date(timeIntervalSince1970: dto.SubscribeTime / 1000),
-                resetsAt: Date(timeIntervalSince1970: dto.ResetTime / 1000)
+                windowStart: resetsAt.addingTimeInterval(-period),
+                resetsAt: resetsAt
             )
         }
 
