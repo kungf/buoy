@@ -260,6 +260,88 @@ final class ProviderParsingTests: XCTestCase {
                        expected.timeIntervalSince1970, accuracy: 0.001)
     }
 
+    // MARK: MiMo
+
+    /// 真实响应样例（脱敏）：Lite 套餐有效期内，月度额度 items 有值
+    func testMiMoParsesMonthlyQuota() throws {
+        // Arrange
+        let detail = """
+        {"code":0,"message":"","data":{"planCode":"lite","planName":"Lite","currentPeriodEnd":"2026-08-25 23:59:59","expired":false}}
+        """.data(using: .utf8)!
+        let usage = """
+        {"code":0,"message":"","data":{"monthUsage":{"percent":12.5,"items":[{"name":"mimo-v2.5-pro","used":512000000,"limit":4100000000,"percent":12.5}]},"usage":null}}
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiMoProvider.parse(detailData: detail, usageData: usage)
+
+        // Assert
+        XCTAssertEqual(report.providerId, "mimo")
+        XCTAssertEqual(report.planExpired, false)
+        XCTAssertEqual(report.quotas.map(\.id), ["mimo.monthly"])
+        let q = report.quotas[0]
+        XCTAssertEqual(q.type, .timeWindowed)
+        XCTAssertEqual(q.unit, .credits)
+        XCTAssertEqual(q.used, 512_000_000)
+        XCTAssertEqual(q.limit, 4_100_000_000)
+        XCTAssertEqual(try XCTUnwrap(q.percentUsed), 512_000_000 / 4_100_000_000, accuracy: 1e-9)
+        // windowStart = periodEnd − 30d；periodEnd 为 UTC 解析
+        XCTAssertEqual(q.resetsAt!.timeIntervalSince(q.windowStart!), 30 * 86400, accuracy: 0.1)
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 8; comps.day = 25
+        comps.hour = 23; comps.minute = 59; comps.second = 59
+        comps.timeZone = TimeZone(identifier: "UTC")
+        let expectedEnd = Calendar(identifier: .gregorian).date(from: comps)!
+        XCTAssertEqual(q.resetsAt!.timeIntervalSince1970, expectedEnd.timeIntervalSince1970, accuracy: 0.1)
+    }
+
+    /// 已过期 + 本月无用量记录（items 为 null）：不产出额度（避免 0/0），只保留过期态
+    func testMiMoParsesExpiredWithNoUsageItems() throws {
+        // Arrange（真实响应：plan-manage 页面在套餐过期且无用量时返回该结构）
+        let detail = """
+        {"code":0,"message":"","data":{"planCode":"lite","planName":"Lite","currentPeriodEnd":"2026-07-25 23:59:59","expired":true}}
+        """.data(using: .utf8)!
+        let usage = """
+        {"code":0,"message":"","data":{"monthUsage":{"percent":0,"items":null},"usage":null}}
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiMoProvider.parse(detailData: detail, usageData: usage)
+
+        // Assert：无额度，但过期态必须透传（驱动球面 .expired 显示）
+        XCTAssertEqual(report.planExpired, true)
+        XCTAssertTrue(report.quotas.isEmpty)
+    }
+
+    /// 错误响应只暴露错误码，不透传服务端自由文本（DESIGN.md §10）
+    func testMiMoErrorExposesOnlyCodeNotFreeText() {
+        // Arrange
+        let detail = #"{"code":401,"message":"session expired, please re-login","data":null}"#.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try MiMoProvider.parse(detailData: detail, usageData: nil)) { error in
+            guard case ProviderError.parse(let msg) = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+            XCTAssertTrue(msg.contains("401"), "should expose the error code: \(msg)")
+            XCTAssertFalse(msg.contains("please re-login"), "must not leak server free text: \(msg)")
+        }
+    }
+
+    /// periodEnd 格式异常（结构变更）时不产出额度但保留过期态
+    func testMiMoSkipsQuotaWhenPeriodEndUnparseable() throws {
+        // Arrange
+        let detail = #"{"code":0,"message":"","data":{"planCode":"lite","planName":"Lite","currentPeriodEnd":"not-a-date","expired":false}}"#.data(using: .utf8)!
+        let usage = #"{"code":0,"message":"","data":{"monthUsage":{"percent":0,"items":[{"name":"m","used":1,"limit":100,"percent":1}]}}}"#.data(using: .utf8)!
+
+        // Act
+        let report = try MiMoProvider.parse(detailData: detail, usageData: usage)
+
+        // Assert
+        XCTAssertTrue(report.quotas.isEmpty)
+        XCTAssertEqual(report.planExpired, false)
+    }
+
     /// usage 存在但全部字段非法：抛 parse 错误，让响应结构变更大声暴露（而非静默空 report）
     func testKimiThrowsWhenUsagePresentButNothingParsed() {
         // Arrange

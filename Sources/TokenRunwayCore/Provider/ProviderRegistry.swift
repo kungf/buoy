@@ -8,6 +8,7 @@ public enum ProviderRegistry {
         VolcanoProvider(),
         DeepSeekProvider(),
         KimiProvider(),
+        MiMoProvider(),
     ]
 
     public static var ids: [String] { all.map { $0.manifest.id } }

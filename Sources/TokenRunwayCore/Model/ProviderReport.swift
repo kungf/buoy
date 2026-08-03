@@ -21,11 +21,16 @@ public struct ProviderReport: Codable, Sendable, Equatable {
     public let fetchedAt: Date
     public let quotas: [Quota]
     public let balance: BalanceInfo?
+    /// 订阅型套餐是否已过期（如 MiMo Token Plan）。nil = 不适用。
+    /// Optional 保持 Codable 向后兼容：旧缓存（无此字段）仍可解码。
+    public let planExpired: Bool?
 
-    public init(providerId: String, fetchedAt: Date, quotas: [Quota], balance: BalanceInfo? = nil) {
+    public init(providerId: String, fetchedAt: Date, quotas: [Quota],
+                balance: BalanceInfo? = nil, planExpired: Bool? = nil) {
         self.providerId = providerId
         self.fetchedAt = fetchedAt
         self.quotas = quotas
         self.balance = balance
+        self.planExpired = planExpired
     }
 }

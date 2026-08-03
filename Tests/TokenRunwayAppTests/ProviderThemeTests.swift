@@ -6,13 +6,15 @@ final class ProviderThemeTests: XCTestCase {
 
     func test_shortName_abbreviatesKnownLongProviders() {
         // Arrange / Act / Assert
-        XCTAssertEqual(ProviderTheme.shortName(for: "deepseek"), "ds")
-        XCTAssertEqual(ProviderTheme.shortName(for: "volcano"), "vol")
+        XCTAssertEqual(ProviderTheme.shortName(for: "deepseek"), "deep")
+        XCTAssertEqual(ProviderTheme.shortName(for: "volcano"), "volc")
+        XCTAssertEqual(ProviderTheme.shortName(for: "kimi"), "kimi")
+        XCTAssertEqual(ProviderTheme.shortName(for: "mimo"), "mimo")
     }
 
     func test_shortName_isCaseInsensitive() {
-        XCTAssertEqual(ProviderTheme.shortName(for: "DeepSeek"), "ds")
-        XCTAssertEqual(ProviderTheme.shortName(for: "VOLCANO"), "vol")
+        XCTAssertEqual(ProviderTheme.shortName(for: "DeepSeek"), "deep")
+        XCTAssertEqual(ProviderTheme.shortName(for: "VOLCANO"), "volc")
     }
 
     func test_shortName_showsShortIdInFull() {
@@ -22,9 +24,9 @@ final class ProviderThemeTests: XCTestCase {
     }
 
     func test_shortName_unknownLongIdFallsBackToPrefix() {
-        // unknown id > 4 chars -> first 3 chars (lowercased)
-        XCTAssertEqual(ProviderTheme.shortName(for: "claude"), "cla")
-        XCTAssertEqual(ProviderTheme.shortName(for: "Moonshot"), "moo")
+        // unknown id > 4 chars -> first 4 chars (lowercased)
+        XCTAssertEqual(ProviderTheme.shortName(for: "claude"), "clau")
+        XCTAssertEqual(ProviderTheme.shortName(for: "Moonshot"), "moon")
     }
 
     func test_shortName_emptyIdReturnsEmpty() {

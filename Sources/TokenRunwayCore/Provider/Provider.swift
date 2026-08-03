@@ -18,6 +18,9 @@ public enum Credential: Sendable {
     case volcAccessKey(ak: String, sk: String)
     /// localCLI 模式：指向本机 CLI 的凭证根目录（如 ~/.kimi-code），由适配器自行读取/刷新
     case localOAuth(home: String)
+    /// 控制台登录态：浏览器 SSO 会话 cookie（如 MiMo 的 api-platform_serviceToken + userId）。
+    /// 由内嵌 WKWebView 登录后提取；过期时重新登录。
+    case sessionCookies(serviceToken: String, userId: String)
 }
 
 /// 永不泄露明文：任何 print()/String(describing:) 只看到前 4 字符 + 长度（DESIGN.md §10 密钥零落盘）。
@@ -30,6 +33,8 @@ extension Credential: CustomStringConvertible {
             return "volcAccessKey(ak: \(ak.prefix(4))…, sk: \(sk.prefix(4))…)"
         case .localOAuth(let home):
             return "localOAuth(home: \(home.prefix(4))…\(home.count) chars)"
+        case .sessionCookies(let serviceToken, let userId):
+            return "sessionCookies(serviceToken: \(serviceToken.prefix(4))…\(serviceToken.count) chars, userId: \(userId.prefix(4))…)"
         }
     }
 }

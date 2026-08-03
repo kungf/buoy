@@ -12,7 +12,7 @@ public struct VolcanoProvider: Provider {
         defaultBaseURL: "https://open.volcengineapi.com",
         allowsBaseURLOverride: true,
         defaultPollInterval: 120,
-        shortName: "vol",
+        shortName: "volc",
         consoleURL: "https://console.volcengine.com/ark",
         logoName: "volcengine_logo",
         themeColor: .orange,

@@ -20,6 +20,8 @@ struct ProviderSettingsView: View {
     @State private var showHelp = false
     @State private var showToken = false
     @State private var showSK = false
+    @State private var showLogin = false
+    @State private var hasSession = false
 
     private var displayName: String {
         store.providerDisplayName(for: manifest.id)
@@ -47,9 +49,7 @@ struct ProviderSettingsView: View {
             case .volcSignature:
                 volcFields
             case .consoleSession:
-                Text("Browser-based auth is configured via the console.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                consoleSessionFields
             case .localCLI:
                 localCLIFields
             }
@@ -153,6 +153,49 @@ struct ProviderSettingsView: View {
         }
     }
 
+    // MARK: - consoleSession (MiMo)：内嵌 WebView 登录，会话 cookie 自维护
+
+    private var consoleSessionFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(hasSession ? "已登录。会话过期后重新登录即可。" : "未登录——点击\"Login\"在内嵌浏览器中完成登录。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Login…") { showLogin = true }
+                if hasSession {
+                    Button("Clear session") { clearSession() }
+                        .foregroundStyle(.red)
+                }
+            }
+            HStack(spacing: 4) {
+                Text("会话 cookie 由本应用维护，过期后自动提示重新登录。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                helpButton
+            }
+        }
+        .sheet(isPresented: $showLogin) {
+            ConsoleSessionLoginView(manifest: manifest) {
+                hasSession = true
+                Task { await store.refresh() }
+            }
+        }
+    }
+
+    private func clearSession() {
+        let url = CredentialStore.defaultURL
+        var config = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
+        config.providers.removeValue(forKey: manifest.id)
+        do {
+            try CredentialStore.save(config, to: url)
+            hasSession = false
+            saveError = nil
+            Task { await store.refresh() }
+        } catch {
+            saveError = "Failed to clear session: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - localCLI (Kimi Code)：无需输入，自动复用本机 CLI 登录态
 
     private var localCLIFields: some View {
@@ -225,7 +268,17 @@ struct ProviderSettingsView: View {
                 }
             }
         case .consoleSession:
-            EmptyView()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("How console login works")
+                    .font(.subheadline.weight(.semibold))
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    step(1, "Click \"Login…\" — an embedded browser opens \(displayName) console")
+                    step(2, "Sign in with your Xiaomi account")
+                    step(3, "Click \"Save session\" to store the login cookies")
+                    step(4, "When the session expires, log in again here")
+                }
+            }
         case .localCLI:
             VStack(alignment: .leading, spacing: 8) {
                 Text("How \(displayName) auth works")
@@ -274,7 +327,10 @@ struct ProviderSettingsView: View {
         case .volcSignature:
             ak = config?.providers[manifest.id]?.ak ?? ""
             sk = config?.providers[manifest.id]?.sk ?? ""
-        case .consoleSession, .localCLI:
+        case .consoleSession:
+            let entry = config?.providers[manifest.id]
+            hasSession = !(entry?.cookieToken ?? "").isEmpty && !(entry?.cookieUserId ?? "").isEmpty
+        case .localCLI:
             break
         }
     }

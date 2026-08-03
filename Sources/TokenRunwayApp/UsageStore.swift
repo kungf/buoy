@@ -356,6 +356,10 @@ final class UsageStore: ObservableObject {
             if providerErrors[providerId] == Self.notConfiguredError { return .notConfigured }
             return providerErrors[providerId] != nil ? .error : .idle
         }
+        // 拉取错误优先（与 BallStateResolver 的 error 最高优先级一致）：
+        // cookie 过期(401) 等瞬时错误应显示 error 而非永久态 expired，避免误导
+        if providerErrors[providerId] != nil { return .error }
+        if report.planExpired == true { return .expired }
         let interval = pollInterval(forProvider: providerId)
         let core = coreQuota(for: providerId) ?? report.quotas.first { $0.type == .timeWindowed }
         let burnRate = core.flatMap { forecast.burnRate(for: $0, pollInterval: interval) }
@@ -514,7 +518,10 @@ final class UsageStore: ObservableObject {
         if isError { center = "!" }
         else if let coreLevel { center = "\(Int((coreLevel * 100).rounded()))%" }
         else { center = "--" }
-        let sub = isError ? "error" : shortLabel(coreQ?.id ?? "")
+        let sub: String
+        if isError { sub = "error" }
+        else if state == .expired { sub = "expired" }
+        else { sub = shortLabel(coreQ?.id ?? "") }
         // Each channel colored by its own remaining health (DESIGN §8.3 independent coloring);
         // core no longer uses state, fixing "5h at 7% turns yellow". `now`-aware so a window
         // whose `resetsAt` has already passed reports full health (green) instead of red-from-
@@ -547,7 +554,7 @@ final class UsageStore: ObservableObject {
         case .depleted: return .depleted
         case .nearDepleted: return .nearDepleted
         case .fastBurn: return .fastBurn
-        case .idle, .consuming, .notConfigured: return nil
+        case .idle, .consuming, .notConfigured, .expired: return nil
         }
     }
 
