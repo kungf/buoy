@@ -397,4 +397,118 @@ final class ProviderParsingTests: XCTestCase {
         // Assert
         XCTAssertEqual(report.quotas.map(\.id), ["kimi.7d"])
     }
+
+    // MARK: Zhipu
+
+    /// 真实响应样例（OpenUsage 文档示例）：日 TIME_LIMIT 跳过，月/周 TOKENS_LIMIT 产出两条额度
+    func testZhipuParsesMonthlyAndWeeklyQuota() throws {
+        // Arrange
+        let json = """
+        {
+          "code": 200,
+          "msg": "Operation successful",
+          "data": {
+            "limits": [
+              {"type": "TIME_LIMIT", "unit": 5, "usage": 100, "currentValue": 2, "remaining": 98, "percentage": 2, "nextResetTime": 1774091383998},
+              {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 36},
+              {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 77, "nextResetTime": 1772276983998}
+            ],
+            "level": "lite"
+          },
+          "success": true
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try ZhipuProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.providerId, "zhipu")
+        XCTAssertEqual(report.quotas.map(\.id), ["zhipu.monthly", "zhipu.weekly"])
+
+        // 月条：无 nextResetTime -> resetsAt/windowStart 为 nil；remaining = 5 × (100−36)/100
+        let monthly = report.quotas[0]
+        XCTAssertEqual(monthly.type, .timeWindowed)
+        XCTAssertEqual(monthly.unit, .tokens)
+        XCTAssertEqual(monthly.limit, 5)
+        XCTAssertEqual(monthly.remaining, 5 * 0.64)
+        XCTAssertNil(monthly.resetsAt)
+        XCTAssertNil(monthly.windowStart)
+        XCTAssertEqual(try XCTUnwrap(monthly.percentUsed), 0.36, accuracy: 1e-9)
+
+        // 周条：resetsAt = 毫秒时间戳转秒；windowStart = resetsAt − 7d
+        let weekly = report.quotas[1]
+        XCTAssertEqual(weekly.limit, 1)
+        XCTAssertEqual(try XCTUnwrap(weekly.remaining), 0.23, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(weekly.resetsAt).timeIntervalSince1970, 1_772_276_983.998, accuracy: 0.001)
+        XCTAssertEqual(weekly.resetsAt!.timeIntervalSince(weekly.windowStart!), 7 * 86400, accuracy: 0.1)
+        XCTAssertEqual(try XCTUnwrap(weekly.percentUsed), 0.77, accuracy: 1e-9)
+    }
+
+    /// 只有日调用限流（TIME_LIMIT）或 number=0 的未订阅配额：全部跳过，返回空额度
+    func testZhipuSkipsTimeLimitAndZeroQuota() throws {
+        // Arrange
+        let json = """
+        {
+          "code": 200,
+          "data": {
+            "limits": [
+              {"type": "TIME_LIMIT", "unit": 5, "usage": 100, "currentValue": 2, "remaining": 98, "percentage": 2},
+              {"type": "TOKENS_LIMIT", "unit": 3, "number": 0, "percentage": 0},
+              {"type": "TOKENS_LIMIT", "unit": 6, "percentage": 77}
+            ]
+          },
+          "success": true
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try ZhipuProvider.parse(data: json)
+
+        // Assert：无可用 token 配额 -> 空 quotas（不抛错，账号可能只有日限流）
+        XCTAssertTrue(report.quotas.isEmpty)
+    }
+
+    /// limits 缺失/为空 = 响应异常 -> 抛错
+    func testZhipuThrowsOnEmptyLimits() {
+        // Arrange
+        let json = #"{"code":200,"data":{"limits":[],"level":"lite"},"success":true}"#.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try ZhipuProvider.parse(data: json)) { error in
+            guard case ProviderError.parse(let msg) = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+            XCTAssertTrue(msg.contains("empty limits"), "unexpected message: \(msg)")
+        }
+    }
+
+    /// 错误响应只暴露错误码，不透传服务端自由文本（DESIGN.md §10）
+    func testZhipuErrorExposesOnlyCodeNotFreeText() {
+        // Arrange
+        let json = #"{"code":401,"msg":"API key invalid, please check your key","data":null}"#.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try ZhipuProvider.parse(data: json)) { error in
+            guard case ProviderError.parse(let msg) = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+            XCTAssertTrue(msg.contains("401"), "should expose the error code: \(msg)")
+            XCTAssertFalse(msg.contains("API key invalid"), "must not leak server free text: \(msg)")
+        }
+    }
+
+    /// 未订阅 coding plan（实测真实响应：code 500 + 自由文本）：视为无额度，返回空报告，
+    /// 不抛错（球显示无数据态而非错误态），也不泄露服务端自由文本
+    func testZhipuNoSubscriptionReturnsEmptyReport() throws {
+        // Arrange（实测响应，msg 已按真实结构构造）
+        let json = #"{"code":500,"msg":"当前用户不存在coding plan","success":false}"#.data(using: .utf8)!
+
+        // Act
+        let report = try ZhipuProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.providerId, "zhipu")
+        XCTAssertTrue(report.quotas.isEmpty)
+    }
 }
