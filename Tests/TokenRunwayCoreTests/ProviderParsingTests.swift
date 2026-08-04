@@ -511,4 +511,278 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertEqual(report.providerId, "zhipu")
         XCTAssertTrue(report.quotas.isEmpty)
     }
+
+    // MARK: MiniMax
+
+    /// 真实响应结构样例（GET /v1/token_plan/remains）：一个文本模型 bucket，
+    /// 滚动 5 小时窗 + 周窗各产出一条额度；usage_count 实为剩余
+    func testMiniMaxParsesIntervalAndWeeklyQuota() throws {
+        // Arrange（5 小时窗 = 18,000,000ms；usage_count=60 是剩余，非已用）
+        let json = """
+        {
+          "base_resp": {"status_code": 0, "status_msg": "success"},
+          "model_remains": [
+            {
+              "model_name": "MiniMax-M3",
+              "start_time": 1774091383000, "end_time": 1774109383000,
+              "current_interval_remaining_percent": 60,
+              "current_interval_total_count": 100,
+              "current_interval_usage_count": 60,
+              "current_interval_status": 1,
+              "weekly_start_time": 1773624600000, "weekly_end_time": 1774229400000,
+              "current_weekly_remaining_percent": 10,
+              "current_weekly_total_count": 700,
+              "current_weekly_usage_count": 70,
+              "current_weekly_status": 1
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiniMaxProvider.parse(data: json)
+
+        // Assert（模型名在 id 中统一小写，与全仓 id 惯例一致）
+        XCTAssertEqual(report.providerId, "minimax")
+        XCTAssertEqual(report.quotas.map(\.id), ["minimax.minimax-m3.5h", "minimax.minimax-m3.7d"])
+
+        // 5 小时窗：used = total − usage（usage 是剩余）
+        let interval = report.quotas[0]
+        XCTAssertEqual(interval.type, .timeWindowed)
+        XCTAssertEqual(interval.unit, .credits)
+        XCTAssertEqual(interval.label, "MiniMax-M3 5 小时额度")
+        XCTAssertEqual(interval.limit, 100)
+        XCTAssertEqual(try XCTUnwrap(interval.remaining), 60, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(interval.used), 40, accuracy: 1e-9)
+        XCTAssertEqual(interval.windowStart!.timeIntervalSince1970, 1_774_091_383, accuracy: 0.01)
+        XCTAssertEqual(interval.resetsAt!.timeIntervalSince1970, 1_774_109_383, accuracy: 0.01)
+        XCTAssertEqual(interval.resetsAt!.timeIntervalSince(interval.windowStart!), 5 * 3600, accuracy: 1)
+
+        // 周窗：remaining_percent 与 counts 自洽（70/700 = 10%）
+        let weekly = report.quotas[1]
+        XCTAssertEqual(weekly.id, "minimax.minimax-m3.7d")
+        XCTAssertEqual(weekly.label, "MiniMax-M3 周额度")
+        XCTAssertEqual(try XCTUnwrap(weekly.remaining), 70, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(weekly.percentUsed), 0.9, accuracy: 1e-9)
+    }
+
+    /// 未订阅（status=3 unlimited、total=0）或 limit=0 的窗口：全部跳过，返回空额度
+    func testMiniMaxSkipsUnsubscribedAndZeroWindows() throws {
+        // Arrange
+        let json = """
+        {
+          "base_resp": {"status_code": 0},
+          "model_remains": [
+            {
+              "model_name": "MiniMax-M3",
+              "start_time": 1774091383000, "end_time": 1774109383000,
+              "current_interval_remaining_percent": 100,
+              "current_interval_total_count": 0,
+              "current_interval_usage_count": 0,
+              "current_interval_status": 3,
+              "weekly_start_time": 0, "weekly_end_time": 0,
+              "current_weekly_remaining_percent": 100,
+              "current_weekly_total_count": 0,
+              "current_weekly_usage_count": 0,
+              "current_weekly_status": 3
+            },
+            {
+              "model_name": "video",
+              "start_time": 1774091383000, "end_time": 1774177783000,
+              "current_interval_remaining_percent": 100,
+              "current_interval_total_count": 0,
+              "current_interval_usage_count": 0,
+              "current_interval_status": 1,
+              "weekly_start_time": 0, "weekly_end_time": 0,
+              "current_weekly_remaining_percent": 100,
+              "current_weekly_total_count": 0,
+              "current_weekly_usage_count": 0,
+              "current_weekly_status": 1
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiniMaxProvider.parse(data: json)
+
+        // Assert：未订阅 = 空报告（正常态，不抛错）
+        XCTAssertEqual(report.providerId, "minimax")
+        XCTAssertTrue(report.quotas.isEmpty)
+    }
+
+    /// 已耗尽（status=2）窗口：即使 usage_count 非 0，remaining 强制为 0、used=limit
+    func testMiniMaxExhaustedWindowForcesFullUsed() throws {
+        // Arrange（usage_count=5 残留，但 status=2 表示已耗尽）
+        let json = """
+        {
+          "base_resp": {"status_code": 0},
+          "model_remains": [
+            {
+              "model_name": "MiniMax-M3",
+              "start_time": 1774091383000, "end_time": 1774109383000,
+              "current_interval_remaining_percent": 5,
+              "current_interval_total_count": 100,
+              "current_interval_usage_count": 5,
+              "current_interval_status": 2,
+              "weekly_start_time": 0, "weekly_end_time": 0,
+              "current_weekly_remaining_percent": 100,
+              "current_weekly_total_count": 0,
+              "current_weekly_usage_count": 0,
+              "current_weekly_status": 3
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiniMaxProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.count, 1)
+        XCTAssertEqual(try XCTUnwrap(report.quotas[0].remaining), 0, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(report.quotas[0].used), 100, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(report.quotas[0].percentUsed), 1, accuracy: 1e-9)
+    }
+
+    /// 错误响应只暴露 status_code，不透传服务端自由文本（DESIGN.md §10）；
+    /// MiniMax 凭证被拒也返回 HTTP 200，成败全看 base_resp
+    func testMiniMaxErrorExposesOnlyCodeNotFreeText() {
+        // Arrange（2013 = 参数错误，非认证类，走 parse 路径）
+        let json = #"{"base_resp":{"status_code":2013,"status_msg":"invalid parameter: model"},"model_remains":[]}"#.data(using: .utf8)!
+
+        // Act / Assert
+        XCTAssertThrowsError(try MiniMaxProvider.parse(data: json)) { error in
+            guard case ProviderError.parse(let msg) = error else {
+                return XCTFail("expected parse error, got \(error)")
+            }
+            XCTAssertTrue(msg.contains("2013"), "should expose the error code: \(msg)")
+            XCTAssertFalse(msg.contains("invalid parameter"), "must not leak server free text: \(msg)")
+        }
+    }
+
+    /// 认证类错误码（1004 未授权 / 2049 无效 key）映射 .unauthorized，
+    /// 让 UI 提示"检查密钥"；1002 频率超限映射 .rateLimited（官方错误码表）
+    func testMiniMaxAuthErrorsMapToUnauthorized() {
+        // Act / Assert
+        for code in [1004, 2049] {
+            let json = """
+            {"base_resp":{"status_code":\(code),"status_msg":"unauthorized, please check your api key"},"model_remains":[]}
+            """.data(using: .utf8)!
+            XCTAssertThrowsError(try MiniMaxProvider.parse(data: json)) { error in
+                guard case ProviderError.unauthorized = error else {
+                    return XCTFail("expected unauthorized for code \(code), got \(error)")
+                }
+            }
+        }
+        let rateJson = #"{"base_resp":{"status_code":1002,"status_msg":"too many requests"}}"#.data(using: .utf8)!
+        XCTAssertThrowsError(try MiniMaxProvider.parse(data: rateJson)) { error in
+            guard case ProviderError.rateLimited = error else {
+                return XCTFail("expected rateLimited for 1002, got \(error)")
+            }
+        }
+    }
+
+    /// usage_count 异常（负值/超限）被 clamp 到 [0, limit]；
+    /// usage_count 缺失时以 remaining_percent 反推（70% -> remaining=70）
+    func testMiniMaxClampsUsageAndFallsBackToPercent() throws {
+        // Arrange
+        let json = """
+        {
+          "base_resp": {"status_code": 0},
+          "model_remains": [
+            {
+              "model_name": "MiniMax-M3",
+              "start_time": 1774091383000, "end_time": 1774109383000,
+              "current_interval_remaining_percent": 70,
+              "current_interval_total_count": 100,
+              "current_interval_usage_count": -50,
+              "current_interval_status": 1,
+              "weekly_start_time": 0, "weekly_end_time": 0,
+              "current_weekly_remaining_percent": 70,
+              "current_weekly_total_count": 100,
+              "current_weekly_status": 1
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiniMaxProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.count, 2)
+        // interval：usage_count=-50 -> clamp 到 0（used=limit）
+        XCTAssertEqual(try XCTUnwrap(report.quotas[0].remaining), 0, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(report.quotas[0].used), 100, accuracy: 1e-9)
+        // weekly：usage_count 缺失 -> 以 remaining_percent=70 反推 remaining=70
+        XCTAssertEqual(try XCTUnwrap(report.quotas[1].remaining), 70, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(report.quotas[1].used), 30, accuracy: 1e-9)
+    }
+
+    /// 时间戳容忍秒级（< 1e12 视为秒）：窗口时长与 resetsAt 均按秒正确解析
+    func testMiniMaxParsesSecondPrecisionTimestamps() throws {
+        // Arrange（秒级时间戳，5 小时窗）
+        let json = """
+        {
+          "base_resp": {"status_code": 0},
+          "model_remains": [
+            {
+              "model_name": "MiniMax-M3",
+              "start_time": 1774091383, "end_time": 1774109383,
+              "current_interval_remaining_percent": 60,
+              "current_interval_total_count": 100,
+              "current_interval_usage_count": 60,
+              "current_interval_status": 1,
+              "weekly_start_time": 0, "weekly_end_time": 0,
+              "current_weekly_remaining_percent": 100,
+              "current_weekly_total_count": 0,
+              "current_weekly_usage_count": 0,
+              "current_weekly_status": 3
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        // Act
+        let report = try MiniMaxProvider.parse(data: json)
+
+        // Assert：id 仍为 5h（时长 18000s），resetsAt 为秒级时间戳
+        XCTAssertEqual(report.quotas.map(\.id), ["minimax.minimax-m3.5h"])
+        XCTAssertEqual(report.quotas[0].resetsAt!.timeIntervalSince1970, 1_774_109_383, accuracy: 0.01)
+        XCTAssertEqual(report.quotas[0].resetsAt!.timeIntervalSince(report.quotas[0].windowStart!), 5 * 3600, accuracy: 1)
+    }
+
+    /// 极端时间戳（start=Int64.max, end=0）不得溢出 trap：窗口时长判为非法，退化为通用窗口
+    func testMiniMaxExtremeTimestampsDoNotTrap() throws {
+        // Arrange
+        let json = """
+        {
+          "base_resp": {"status_code": 0},
+          "model_remains": [
+            {
+              "model_name": "MiniMax-M3",
+              "start_time": 9223372036854775807, "end_time": 0,
+              "current_interval_remaining_percent": 60,
+              "current_interval_total_count": 100,
+              "current_interval_usage_count": 60,
+              "current_interval_status": 1,
+              "weekly_start_time": 0, "weekly_end_time": 0,
+              "current_weekly_remaining_percent": 100,
+              "current_weekly_total_count": 0,
+              "current_weekly_usage_count": 0,
+              "current_weekly_status": 3
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        // Act（原实现 Int64 减法会在此 trap；现应为通用窗口 id + 无 resetsAt）
+        let report = try MiniMaxProvider.parse(data: json)
+
+        // Assert
+        XCTAssertEqual(report.quotas.map(\.id), ["minimax.minimax-m3.interval"])
+        XCTAssertNil(report.quotas[0].resetsAt)
+        XCTAssertEqual(try XCTUnwrap(report.quotas[0].remaining), 60, accuracy: 1e-9)
+    }
 }

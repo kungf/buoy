@@ -18,7 +18,7 @@
 ## Why
 
 - **Glanceable**: see consumption at a glance, without switching away from your work or opening a browser.
-- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance), Kimi Code (weekly quota + rolling rate windows) — rendered homogeneously; click for a full dashboard across all providers.
+- **Unified multi-provider view**: Volcano (5h / 7d / 30d rolling windows), DeepSeek (pure balance), Kimi Code (weekly quota + rolling rate windows + booster wallet), MiMo (monthly Token Plan), Zhipu (monthly / weekly token quotas), MiniMax (5h rolling window + weekly) — rendered homogeneously; click for a full dashboard across all providers.
 - **Prediction over reporting**: computes ETA from burn rate ("at the current pace, your 5h quota has 12 minutes left"), attacking the pain of "my 5-hour quota burned out in 10 minutes before I noticed."
 - **Low-overhead resident**: native SwiftUI + AppKit, tiny resident memory and CPU; never steals focus.
 
@@ -30,8 +30,8 @@
 |---|---|
 | Floating ball (outer ring + core liquid + breathing/wave animation) | Keychain credential storage (currently config.json) |
 | Dashboard accordion + ETA + sparkline | Alert notifications (AlertEngine + UserNotifications) |
-| DeepSeek + Volcano + Kimi Code providers (real-verified) | Settings UI, menu bar, launch-at-login |
-| Burn rate / ETA wired to ball breathing & dashboard | MiMo / OpenAI / Anthropic, sandbox & signing |
+| 6 providers: Volcano · DeepSeek · Kimi Code · MiMo · Zhipu · MiniMax (real-verified) | Settings UI, menu bar, launch-at-login |
+| Burn rate / ETA wired to ball breathing & dashboard | OpenAI / Anthropic, sandbox & signing |
 | Volc Signature V4 signing + unified Quota model | (per-provider polling, backoff & persistence ✅) |
 
 Full roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
@@ -65,7 +65,9 @@ Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitig
 {
   "providers": {
     "deepseek": { "token": "sk-your-deepseek-api-key" },
-    "volcano":  { "ak": "your-volc-AccessKey", "sk": "your-volc-SecretKey" }
+    "volcano":  { "ak": "your-volc-AccessKey", "sk": "your-volc-SecretKey" },
+    "zhipu":    { "token": "your-zhipu-api-key" },
+    "minimax":  { "token": "your-minimax-api-key" }
   }
 }
 ```
@@ -73,16 +75,22 @@ Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitig
 > **Volcano note**: you need IAM **AccessKey + SecretKey** (console → Access Control IAM → Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
 >
 > **Kimi Code note**: zero configuration — it reuses the local Kimi Code CLI login (`~/.kimi-code/credentials/kimi-code.json`, or `$KIMI_CODE_HOME`). If you haven't logged in, run `kimi` and execute `/login` first. Nothing is stored in `~/.trwy/config.json` for this provider.
+>
+> **MiMo note**: no API key — sign in with the console session in the app's settings (WKWebView login); the session cookies are stored in `~/.trwy/config.json` (`cookieToken` / `cookieUserId`).
+>
+> **MiniMax note**: use a **Token Plan / Coding Plan subscription key** (platform → user center → interface keys) — a pay-as-you-go API key has no plan quota and the endpoint returns unauthorized.
 
 **3. Verify with the CLI**
 
 ```sh
-.build/debug/trwyctl all      # fetches deepseek + volcano + kimi once, prints quotas
+.build/debug/trwyctl all      # fetches all configured providers once, prints quotas
 ```
 
 Credential priority: env vars > `~/.trwy/config.json`:
 - `TRWY_DEEPSEEK_TOKEN`
 - `TRWY_VOLC_AK` / `TRWY_VOLC_SK`
+- `TRWY_ZHIPU_TOKEN`
+- `TRWY_MINIMAX_TOKEN`
 
 **4. Package & run**
 
@@ -130,7 +138,7 @@ UI           FloatingBall (NSPanel) · Dashboard (accordion) · [Settings WIP]
               │ subscribes @Published
 Service      UsageStore (ObservableObject) · ForecastEngine (burn rate/ETA)
               │ scheduling                    │ credentials
-Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · [MiMo/OpenAI/Anthropic WIP]
+Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · MiMo(consoleSession) · Zhipu(bearer) · MiniMax(bearer) · [OpenAI/Anthropic WIP]
               │
 Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
@@ -139,7 +147,7 @@ Four SPM targets:
 - **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) — model / auth / forecast / providers / networking
 - **TokenRunwayApp** — floating ball + dashboard UI
 - **trwyctl** — adapter integration CLI
-- **TokenRunwayCoreTests** — unit tests (33/33)
+- **TokenRunwayCoreTests** — unit tests (160/160)
 
 ## Security
 
