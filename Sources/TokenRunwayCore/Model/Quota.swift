@@ -11,12 +11,68 @@ public enum QuotaType: String, Codable, Sendable {
 }
 
 /// 计量单位。不同 unit 之间禁止跨 provider 聚合求和（DESIGN.md §3.2）
-public enum Unit: String, Codable, Sendable {
+public enum Unit: Codable, Sendable, Equatable {
     case tokens
     /// 火山 AFP 点数
     case credits
     case usd
     case cny
+    /// 无单位（自定义指标未配 unit 时显示纯数字）
+    case none
+    /// 任意自定义单位文本（如 "GBP"、"小时"）。编码为 {"custom":"GBP"}，
+    /// 与固定 case 的纯字符串格式区分。
+    case custom(String)
+
+    /// 固定 case 的序列化名（旧缓存即此格式）
+    private var fixedName: String? {
+        switch self {
+        case .tokens: return "tokens"
+        case .credits: return "credits"
+        case .usd: return "usd"
+        case .cny: return "cny"
+        case .none: return "none"
+        case .custom: return nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        if let name = fixedName {
+            var container = encoder.singleValueContainer()
+            try container.encode(name)
+            return
+        }
+        if case .custom(let text) = self {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(text, forKey: .custom)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        // 旧缓存/固定 case：纯字符串（"tokens" 等）
+        if let container = try? decoder.singleValueContainer(),
+           let raw = try? container.decode(String.self) {
+            switch raw {
+            case "tokens": self = .tokens
+            case "credits": self = .credits
+            case "usd": self = .usd
+            case "cny": self = .cny
+            case "none": self = .none
+            default: self = .custom(raw)
+            }
+            return
+        }
+        // 新格式：.custom(文本) → {"custom":"GBP"}
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.custom) {
+            self = .custom(try container.decode(String.self, forKey: .custom))
+            return
+        }
+        throw DecodingError.dataCorrupted(.init(
+            codingPath: decoder.codingPath,
+            debugDescription: "unknown Unit value"))
+    }
+
+    private enum CodingKeys: String, CodingKey { case custom }
 }
 
 /// 统一额度模型（DESIGN.md §3.2）。
@@ -40,6 +96,9 @@ public struct Quota: Identifiable, Codable, Sendable, Equatable {
     public let windowStart: Date?
     /// 窗口结束 / reset 时刻
     public let resetsAt: Date?
+    /// 水位方向（仅 timeWindowed 有意义）：true = 已用比例（used/limit，满 = 耗尽，
+    /// 自定义指标 used 语义）；false = 剩余比例（默认，满 = 健康，内置 provider）。
+    public let showsUsedLevel: Bool
 
     public init(
         id: String,
@@ -50,7 +109,8 @@ public struct Quota: Identifiable, Codable, Sendable, Equatable {
         limit: Double? = nil,
         remaining: Double? = nil,
         windowStart: Date? = nil,
-        resetsAt: Date? = nil
+        resetsAt: Date? = nil,
+        showsUsedLevel: Bool = false
     ) {
         self.id = id
         self.type = type
@@ -61,6 +121,24 @@ public struct Quota: Identifiable, Codable, Sendable, Equatable {
         self.remaining = remaining
         self.windowStart = windowStart
         self.resetsAt = resetsAt
+        self.showsUsedLevel = showsUsedLevel
+    }
+
+    /// 自定义解码：showsUsedLevel 是带默认值的 let，合成解码器会静默忽略它
+    /// （"immutable property will not be decoded"）——used 语义的配额经 cache.json
+    /// 往返后水位方向会丢失，重启即回退成剩余语义。旧缓存无此字段 → false。
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        type = try container.decode(QuotaType.self, forKey: .type)
+        label = try container.decode(String.self, forKey: .label)
+        unit = try container.decode(Unit.self, forKey: .unit)
+        used = try container.decodeIfPresent(Double.self, forKey: .used)
+        limit = try container.decodeIfPresent(Double.self, forKey: .limit)
+        remaining = try container.decodeIfPresent(Double.self, forKey: .remaining)
+        windowStart = try container.decodeIfPresent(Date.self, forKey: .windowStart)
+        resetsAt = try container.decodeIfPresent(Date.self, forKey: .resetsAt)
+        showsUsedLevel = try container.decodeIfPresent(Bool.self, forKey: .showsUsedLevel) ?? false
     }
 }
 

@@ -52,6 +52,8 @@ struct ProviderSettingsView: View {
                 consoleSessionFields
             case .localCLI:
                 localCLIFields
+            case .none:
+                EmptyView()
             }
 
             // Error
@@ -293,6 +295,8 @@ struct ProviderSettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+        case .none:
+            EmptyView()
         }
     }
 
@@ -316,6 +320,7 @@ struct ProviderSettingsView: View {
             && !sk.trimmingCharacters(in: .whitespaces).isEmpty
         case .consoleSession: return false
         case .localCLI: return false   // 无需填写，直接关闭即可
+        case .none: return true
         }
     }
 
@@ -331,6 +336,8 @@ struct ProviderSettingsView: View {
             let entry = config?.providers[manifest.id]
             hasSession = !(entry?.cookieToken ?? "").isEmpty && !(entry?.cookieUserId ?? "").isEmpty
         case .localCLI:
+            break
+        case .none:
             break
         }
     }
@@ -354,6 +361,8 @@ struct ProviderSettingsView: View {
             break
         case .localCLI:
             break   // 不写 config.json：登录态在本机 CLI 凭证文件里
+        case .none:
+            break
         }
         config.providers[manifest.id] = entry
 

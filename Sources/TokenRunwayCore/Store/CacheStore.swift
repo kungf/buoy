@@ -13,10 +13,14 @@ public struct TokenRunwayCache: Codable, Sendable, Equatable {
 }
 
 public enum CacheStore {
+    /// 缓存路径。get-set：测试可重定向到临时文件（默认 ~/.trwy/cache.json）
     public static var defaultURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".trwy/cache.json")
+        get { defaultURLStorage }
+        set { defaultURLStorage = newValue }
     }
+    /// nonisolated(unsafe)：仅测试重定向用，生产路径只读
+    private nonisolated(unsafe) static var defaultURLStorage = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".trwy/cache.json")
 
     public static func load(from url: URL = defaultURL) -> TokenRunwayCache? {
         guard let data = try? Data(contentsOf: url) else { return nil }

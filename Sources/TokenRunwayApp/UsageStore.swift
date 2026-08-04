@@ -22,9 +22,10 @@ final class UsageStore: ObservableObject {
     /// Polling paused (toggled from the right-click menu)
     @Published var pollingPaused: Bool = false
 
-    private let providers: [String: any Provider]
+    /// var：自定义指标保存后可热加载（reloadCustomMetrics）
+    private var providers: [String: any Provider]
     /// Provider init order (gives a stable order for "the first ball" and cluster arrangement)
-    private let providerOrder: [String]
+    private var providerOrder: [String]
     private let preferences: SelectionStorage
     private var pollTasks: [String: Task<Void, Never>] = [:]
     private var consecutiveFailures: [String: Int] = [:]
@@ -33,10 +34,12 @@ final class UsageStore: ObservableObject {
     /// to cache.json.
     private var forecast = ForecastEngine()
 
-    init(providers: [any Provider] = ProviderRegistry.all,
+    init(providers: [any Provider]? = nil,
          preferences: SelectionStorage = Preferences()) {
-        self.providerOrder = providers.map { $0.manifest.id }
-        self.providers = Dictionary(providers.map { ($0.manifest.id, $0) },
+        // 未显式注入时：内置 provider + 用户自定义指标（~/.trwy/config.json 的 customMetrics）
+        let resolved = providers ?? ProviderRegistry.all(includingCustom: CustomMetricConfigStore.load())
+        self.providerOrder = resolved.map { $0.manifest.id }
+        self.providers = Dictionary(resolved.map { ($0.manifest.id, $0) },
                                     uniquingKeysWith: { first, _ in first })
         self.preferences = preferences
     }
@@ -53,19 +56,58 @@ final class UsageStore: ObservableObject {
         }
         loadCache()
         for (index, id) in providerOrder.enumerated() {
-            guard let provider = providers[id] else { continue }
-            let base = provider.manifest.defaultPollInterval
-            pollTasks[id] = Task { [weak self] in
-                // Stagger: each provider starts 5s apart to avoid a synchronized network burst (DESIGN.md §6)
-                try? await Task.sleep(for: .seconds(Double(index) * 5))
-                while !Task.isCancelled {
-                    guard let self else { return }
-                    if !self.pollingPaused { await self.fetchOne(id) }
-                    let delay = self.backoff.delay(base: base, afterFailures: self.consecutiveFailures[id] ?? 0)
-                    try? await Task.sleep(for: .seconds(delay))
-                }
+            startPolling(id: id, stagger: Double(index) * 5)
+        }
+    }
+
+    /// 启动单个 provider 的轮询任务。start 时错峰 5s（避免同步网络突发，DESIGN.md §6）；
+    /// 自定义指标保存后热加载时即时启动（stagger=1）。
+    private func startPolling(id: String, stagger: TimeInterval) {
+        guard let provider = providers[id] else { return }
+        let base = provider.manifest.defaultPollInterval
+        pollTasks[id]?.cancel()
+        pollTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(stagger))
+            while !Task.isCancelled {
+                guard let self else { return }
+                if !self.pollingPaused { await self.fetchOne(id) }
+                let delay = self.backoff.delay(base: base, afterFailures: self.consecutiveFailures[id] ?? 0)
+                try? await Task.sleep(for: .seconds(delay))
             }
         }
+    }
+
+    /// 自定义指标配置变更后热加载（设置面板保存/删除后调用）：
+    /// 新增的立即注册并开始轮询；编辑的替换实例（轮询循环每轮重读 providers[id]，无需重启任务）；
+    /// 删除的取消轮询、清理报告/错误/选中态并落盘缓存（否则删除的指标会在重启后从 cache.json 复活）。
+    func reloadCustomMetrics() {
+        let configs = CustomMetricConfigStore.load()
+        let activeIds = Set(configs.map(\.id))
+        // 删除已移除的
+        for id in Array(providers.keys) where isCustomProvider(id) && !activeIds.contains(id) {
+            providers.removeValue(forKey: id)
+            providerOrder.removeAll { $0 == id }
+            pollTasks[id]?.cancel()
+            pollTasks.removeValue(forKey: id)
+            consecutiveFailures.removeValue(forKey: id)
+            providerErrors.removeValue(forKey: id)
+            reports.removeAll { $0.providerId == id }
+        }
+        // 新增/更新的：注册（总是替换实例，使编辑立即生效）+ 启动轮询
+        for config in configs {
+            if providers[config.id] == nil {
+                providerOrder.append(config.id)
+            }
+            providers[config.id] = CustomMetricsProvider(config: config)
+            if pollTasks[config.id] == nil {
+                startPolling(id: config.id, stagger: 1)
+            }
+        }
+        // 删除的 provider 若在球簇上，一并移除（保持选择集合有效）
+        let valid = providerOrder
+        selectedProviderIds = selectedProviderIds.filter { valid.contains($0) }
+        persistSelection()
+        saveCache()
     }
 
     func stop() {
@@ -101,28 +143,45 @@ final class UsageStore: ObservableObject {
     /// (drives backoff, DESIGN.md §6).
     private func fetchOne(_ id: String) async {
         guard let provider = providers[id] else { return }
-        // localCLI 模式不读 ~/.trwy/config.json，直接指向本机 CLI 登录态目录
-        let credential: Credential?
-        if provider.manifest.authMode == .localCLI {
-            credential = CredentialStore.localCLICredential()
-        } else {
-            credential = CredentialStore.credential(for: id, from: CredentialStore.load())
-        }
-        guard let credential else {
+        guard let credential = resolveCredential(for: provider) else {
             providerErrors[id] = Self.notConfiguredError
             return
         }
         do {
             let report = try await provider.fetchUsage(credential: credential)
+            // await 期间该 provider 可能已被删除（自定义指标热移除）：重新确认，
+            // 否则已删除的 report/错误行会作为"幽灵"复活且无人能清理
+            guard providers[id] != nil else { return }
             upsert(report)
             providerErrors[id] = nil
             consecutiveFailures[id] = 0
             saveCache()
             autoSwitchIfNeeded()
         } catch {
+            guard providers[id] != nil else { return }
             consecutiveFailures[id] = (consecutiveFailures[id] ?? 0) + 1
             providerErrors[id] = Self.describe(error)
         }
+    }
+
+    /// 自定义指标 provider 判定（按类型而非 id 前缀：手改 config.json 的 id 也能正确
+    /// 识别，热移除/齿轮路由才不致漏掉）
+    func isCustomProvider(_ id: String) -> Bool {
+        providers[id] is CustomMetricsProvider
+    }
+
+    /// 凭证解析：localCLI 模式读本机 CLI 登录态目录；自定义指标（allowsNoCredential）
+    /// 无存储凭证时注入 .none —— 内网公开端点允许裸请求，不显示 "Not configured"。
+    private func resolveCredential(for provider: any Provider) -> Credential? {
+        if provider.manifest.authMode == .localCLI {
+            return CredentialStore.localCLICredential()
+        }
+        let stored = CredentialStore.credential(for: provider.manifest.id, from: CredentialStore.load())
+        // 注意必须写 Credential.none——返回类型是 Credential?，裸 .none 会解析成 Optional.none（nil）
+        if stored == nil, provider.manifest.allowsNoCredential {
+            return Credential.none
+        }
+        return stored
     }
 
     private func upsert(_ report: ProviderReport) {
@@ -154,11 +213,14 @@ final class UsageStore: ObservableObject {
     private func loadCache() {
         guard let cache = CacheStore.load() else { return }
         let order = providerOrder
-        reports = cache.reports.sorted { lhs, rhs in
-            let li = order.firstIndex(of: lhs.providerId) ?? Int.max
-            let ri = order.firstIndex(of: rhs.providerId) ?? Int.max
-            return li < ri
-        }
+        // 过滤掉已不存在的 provider（如重启前删除的自定义指标残留），防止幽灵报告复活
+        reports = cache.reports
+            .filter { order.contains($0.providerId) }
+            .sorted { lhs, rhs in
+                let li = order.firstIndex(of: lhs.providerId) ?? Int.max
+                let ri = order.firstIndex(of: rhs.providerId) ?? Int.max
+                return li < ri
+            }
         forecast = cache.forecast
     }
 
@@ -487,7 +549,9 @@ final class UsageStore: ObservableObject {
 
         // Upper (small): last-5h spend ("−¥x.xx"); Lower (big): balance. The 5h window is
         // labeled on the hover card (HoverSummaryView), not on the ball itself.
-        let spentText = consumedOpt.map { "−¥\(String(format: "%.2f", $0))" } ?? "--"
+        // 符号取自 currency（自定义指标的 USD/无单位余额不再硬编码 ¥）
+        let symbol = report.balance.map { currencySymbol($0.currency) } ?? ""
+        let spentText = consumedOpt.map { "−\(symbol)\(String(format: "%.2f", $0))" } ?? "--"
 
         return BallModel(mode: .balance, ringUsed: nil, midRingUsed: nil,
                          coreLevel: level, ringHealth: nil, midRingHealth: nil, coreHealth: level,
@@ -510,17 +574,29 @@ final class UsageStore: ObservableObject {
         // passed reads as 0% even if the cached `used` value is stale
         // (e.g. the Mac slept through the reset and polling paused).
         let now = Date()
+        let corePct = coreQ?.percentUsedAt(now: now)
         let ringUsed = ringQ?.percentUsedAt(now: now)
         let midUsed = midQ?.percentUsedAt(now: now)
-        let coreLevel = coreQ?.percentUsedAt(now: now).map { 1 - $0 }
+        // 水位方向：used 语义 = 已用比例（满 = 耗尽）；默认 = 剩余比例（满 = 健康）。
+        // 红色/呼吸语义不变（used 高 = 剩余少 = 危险，HealthScore 自动正确）。
+        let coreLevel = coreQ?.showsUsedLevel == true ? corePct : corePct.map { 1 - $0 }
         let isError = state == .error
         let center: String
         if isError { center = "!" }
+        else if coreQ?.showsUsedLevel == true, let used = coreQ?.used {
+            // used 语义：中心 = 使用量数值
+            center = Self.formatNumber(used)
+        }
         else if let coreLevel { center = "\(Int((coreLevel * 100).rounded()))%" }
         else { center = "--" }
         let sub: String
         if isError { sub = "error" }
         else if state == .expired { sub = "expired" }
+        else if coreQ?.showsUsedLevel == true {
+            // used 语义：有 max → 已用百分比；无 max → 单位缩写
+            if let pct = corePct { sub = "\(Int((pct * 100).rounded()))%" }
+            else { sub = Self.unitSymbol(coreQ?.unit) }
+        }
         else { sub = shortLabel(coreQ?.id ?? "") }
         // Each channel colored by its own remaining health (DESIGN §8.3 independent coloring);
         // core no longer uses state, fixing "5h at 7% turns yellow". `now`-aware so a window
@@ -535,6 +611,24 @@ final class UsageStore: ObservableObject {
                          centerText: center, subText: sub, spentRecentText: nil, currencyBadge: nil,
                          state: state, breathUrgency: breath, isStale: stale,
                          alertBadges: badges)
+    }
+
+    /// used 语义球中心数值：整数不带小数（880），否则一位小数（1234.5）
+    private static func formatNumber(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    /// used 语义无 max 时的单位缩写（球面 sub 文本）
+    private static func unitSymbol(_ unit: TokenRunwayCore.Unit?) -> String {
+        switch unit {
+        case .cny: return "¥"
+        case .usd: return "$"
+        case .tokens: return "tok"
+        case .credits: return "pt"
+        case .custom(let text): return text
+        case .some(.none): return ""
+        case nil: return ""
+        }
     }
 
     /// Breakthrough badges (DESIGN.md §8.1): an unselected provider in an alerting state raises a

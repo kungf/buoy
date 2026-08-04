@@ -40,4 +40,28 @@ final class ProviderRegistryTests: XCTestCase {
         XCTAssertEqual(ProviderRegistry.provider(for: "deepseek")?.manifest.envPrefix, "DEEPSEEK")
         XCTAssertEqual(ProviderRegistry.provider(for: "volcano")?.manifest.envPrefix, "VOLC")
     }
+
+    // MARK: Custom metrics merge
+
+    func test_includingCustomMergesCustomProvidersAfterBuiltins() {
+        // Arrange
+        let custom = [
+            CustomMetricConfig(id: "custom-1", name: "预算 A", baseURL: "u", metric: "m"),
+            CustomMetricConfig(id: "custom-2", name: "预算 B", baseURL: "u", metric: "m"),
+        ]
+
+        // Act
+        let all = ProviderRegistry.all(includingCustom: custom)
+
+        // Assert：内置 provider 在前、自定义在后，顺序稳定（决定球簇排列）
+        XCTAssertEqual(Array(all.prefix(ProviderRegistry.all.count)).map(\.id),
+                       ProviderRegistry.ids)
+        XCTAssertEqual(Array(all.suffix(custom.count)).map(\.id), ["custom-1", "custom-2"])
+        XCTAssertEqual(all.count, ProviderRegistry.all.count + custom.count)
+    }
+
+    func test_includingCustomWithEmptyListReturnsBuiltinsOnly() {
+        // Act / Assert
+        XCTAssertEqual(ProviderRegistry.all(includingCustom: []).map(\.id), ProviderRegistry.ids)
+    }
 }

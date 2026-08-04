@@ -63,6 +63,12 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <!-- 自定义指标按设计访问内网 http:// Prometheus（prom.internal:9090 等）：
+         ATS 默认拒绝明文，需放行。token 走明文 HTTP 为已知取舍（内网单用户工具）。 -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key><true/>
+    </dict>
 </dict>
 </plist>
 PLIST

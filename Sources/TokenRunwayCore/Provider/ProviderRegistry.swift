@@ -13,6 +13,11 @@ public enum ProviderRegistry {
         MiniMaxProvider(),
     ]
 
+    /// 内置 + 用户自定义指标合并（自定义在后，顺序稳定）。UsageStore/trwyctl 启动时调用。
+    public static func all(includingCustom customConfigs: [CustomMetricConfig]) -> [any Provider] {
+        all + customConfigs.map { CustomMetricsProvider(config: $0) }
+    }
+
     public static var ids: [String] { all.map { $0.manifest.id } }
 
     public static func provider(for id: String) -> (any Provider)? {

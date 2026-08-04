@@ -10,6 +10,8 @@ public enum AuthMode: String, Codable, Sendable {
     case consoleSession
     /// 复用本机 CLI 的 OAuth 登录态（读 CLI 凭证文件，如 Kimi Code；无需用户手填）
     case localCLI
+    /// 无需凭证（自定义指标的内网公开端点）
+    case none
 }
 
 /// 凭证（注入式，适配器不持有；真实存储在 Keychain，见 DESIGN.md §10）
@@ -21,6 +23,8 @@ public enum Credential: Sendable {
     /// 控制台登录态：浏览器 SSO 会话 cookie（如 MiMo 的 api-platform_serviceToken + userId）。
     /// 由内嵌 WKWebView 登录后提取；过期时重新登录。
     case sessionCookies(serviceToken: String, userId: String)
+    /// 无需凭证：适配器直接裸请求（自定义指标公开端点）
+    case none
 }
 
 /// 永不泄露明文：任何 print()/String(describing:) 只看到前 4 字符 + 长度（DESIGN.md §10 密钥零落盘）。
@@ -35,6 +39,8 @@ extension Credential: CustomStringConvertible {
             return "localOAuth(home: \(home.prefix(4))…\(home.count) chars)"
         case .sessionCookies(let serviceToken, let userId):
             return "sessionCookies(serviceToken: \(serviceToken.prefix(4))…\(serviceToken.count) chars, userId: \(userId.prefix(4))…)"
+        case .none:
+            return "none"
         }
     }
 }
@@ -78,6 +84,9 @@ public struct ProviderManifest: Sendable, Equatable {
     /// trwyctl env 变量前缀覆盖（如火山用 "VOLC" 而非 id "VOLCANO"）。nil -> id 大写。
     /// 外部契约：改动需同步 README 与用户 shell rc。
     public let envPrefixOverride: String?
+    /// 无凭证也可拉取（如自定义指标的内网公开端点）。true 时 UsageStore 在
+    /// 找不到存储凭证时注入 `.none`，fetchUsage 收到 .none 后裸请求。
+    public let allowsNoCredential: Bool
 
     /// 实际 env 变量前缀，如 "DEEPSEEK" / "VOLC"。
     public var envPrefix: String { envPrefixOverride ?? id.uppercased() }
@@ -93,7 +102,8 @@ public struct ProviderManifest: Sendable, Equatable {
         consoleURL: String? = nil,
         logoName: String? = nil,
         themeColor: ThemeColor = .purple,
-        envPrefixOverride: String? = nil
+        envPrefixOverride: String? = nil,
+        allowsNoCredential: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
@@ -106,6 +116,7 @@ public struct ProviderManifest: Sendable, Equatable {
         self.logoName = logoName
         self.themeColor = themeColor
         self.envPrefixOverride = envPrefixOverride
+        self.allowsNoCredential = allowsNoCredential
     }
 }
 

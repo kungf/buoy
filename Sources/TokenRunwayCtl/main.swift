@@ -29,6 +29,8 @@ func envCredential(for provider: any Provider) -> Credential? {
     case .localCLI:
         // 无 env 变量：登录态直接来自本机 CLI 凭证文件
         break
+    case .none:
+        break
     }
     return nil
 }
@@ -40,6 +42,7 @@ func envHint(for provider: any Provider) -> String {
     case .volcSignature: return "env \(prefix)AK / \(prefix)SK"
     case .consoleSession: return "console session"
     case .localCLI: return "local \(provider.manifest.displayName) CLI login (~/.kimi-code)"
+    case .none: return "no auth needed"
     }
 }
 
@@ -47,7 +50,12 @@ func credential(for provider: any Provider, config: TokenRunwayConfigFile?) -> C
     if provider.manifest.authMode == .localCLI {
         return CredentialStore.localCLICredential()
     }
-    return envCredential(for: provider) ?? CredentialStore.credential(for: provider.manifest.id, from: config)
+    if let env = envCredential(for: provider) { return env }
+    if let stored = CredentialStore.credential(for: provider.manifest.id, from: config) { return stored }
+    // 自定义指标：无凭证也可拉取（内网公开端点）。
+    // 注意必须写 Credential.none——返回类型是 Credential?，裸 .none 会解析成 Optional.none（nil）
+    if provider.manifest.allowsNoCredential { return Credential.none }
+    return nil
 }
 
 func printReport(_ report: ProviderReport) {
@@ -71,11 +79,17 @@ let config = CredentialStore.load()
 
 let targets: [any Provider]
 if arg == "all" {
-    targets = ProviderRegistry.all
+    // 内置 + 用户自定义指标（~/.trwy/config.json 的 customMetrics）
+    targets = ProviderRegistry.all(includingCustom: config?.customMetrics ?? [])
 } else if let provider = ProviderRegistry.provider(for: arg) {
     targets = [provider]
+} else if let custom = config?.customMetrics.first(where: { $0.id == arg }) {
+    // 单个自定义指标：trwyctl <custom-id>
+    targets = [CustomMetricsProvider(config: custom)]
 } else {
-    print("unknown provider: \(arg). Known: \(ProviderRegistry.ids.joined(separator: ", "))")
+    let customIds = (config?.customMetrics ?? []).map(\.id)
+    let known = (ProviderRegistry.ids + customIds).joined(separator: ", ")
+    print("unknown provider: \(arg). Known: \(known)")
     exit(2)
 }
 

@@ -31,18 +31,59 @@ public struct ProviderCredentials: Codable, Sendable, Equatable {
 /// 凭证配置文件（chmod 600，仓库外；M2 迁移 Keychain，DESIGN.md §10）
 public struct TokenRunwayConfigFile: Codable, Sendable, Equatable {
     public var providers: [String: ProviderCredentials]
+    /// 用户自定义指标配置（非机密；token 仍走 providers[<id>].token）。
+    /// 存同一文件而非 UserDefaults：trwyctl 与 App 分属不同进程域，需共享。
+    public var customMetrics: [CustomMetricConfig]
 
-    public init(providers: [String: ProviderCredentials]) {
+    public init(providers: [String: ProviderCredentials], customMetrics: [CustomMetricConfig] = []) {
         self.providers = providers
+        self.customMetrics = customMetrics
+    }
+
+    /// 旧 config.json 无 customMetrics 字段：decodeIfPresent 兜底为空数组
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        providers = try container.decode([String: ProviderCredentials].self, forKey: .providers)
+        customMetrics = try container.decodeIfPresent([CustomMetricConfig].self, forKey: .customMetrics) ?? []
+    }
+}
+
+/// 自定义指标配置的读取与增删（与 providers 同文件，原子写回）。
+public enum CustomMetricConfigStore {
+    public static func load(from url: URL = CredentialStore.defaultURL) -> [CustomMetricConfig] {
+        CredentialStore.load(from: url)?.customMetrics ?? []
+    }
+
+    /// 新增/更新（按 id 原地替换保持顺序；不动其余配置与 providers）
+    public static func upsert(_ config: CustomMetricConfig, to url: URL = CredentialStore.defaultURL) throws {
+        var file = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
+        if let index = file.customMetrics.firstIndex(where: { $0.id == config.id }) {
+            file.customMetrics[index] = config
+        } else {
+            file.customMetrics.append(config)
+        }
+        try CredentialStore.save(file, to: url)
+    }
+
+    /// 删除配置并清理同 id 的凭证条目
+    public static func remove(id: String, from url: URL = CredentialStore.defaultURL) throws {
+        var file = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
+        file.customMetrics.removeAll { $0.id == id }
+        file.providers.removeValue(forKey: id)
+        try CredentialStore.save(file, to: url)
     }
 }
 
 /// 凭证加载与映射。token 绝不打印、不写日志。
 public enum CredentialStore {
+    /// 配置路径。get-set：测试可重定向到临时文件（默认 ~/.trwy/config.json）
     public static var defaultURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".trwy/config.json")
+        get { defaultURLStorage }
+        set { defaultURLStorage = newValue }
     }
+    /// nonisolated(unsafe)：仅测试重定向用，生产路径只读
+    private nonisolated(unsafe) static var defaultURLStorage = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".trwy/config.json")
 
     public static func load(from url: URL = defaultURL) -> TokenRunwayConfigFile? {
         guard let data = try? Data(contentsOf: url) else { return nil }
@@ -55,6 +96,9 @@ public enum CredentialStore {
         try FileManager.default.createDirectory(at: dir,
                                                 withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
+        // 目录若已存在（旧版本创建/手动创建）不会应用 createDirectory 的权限，
+        // 必须每次保存都强制 0700，否则 .atomic 临时文件在 chmod 600 前可能按 umask 落盘
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         let data = try JSONEncoder().encode(config)
         try data.write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
