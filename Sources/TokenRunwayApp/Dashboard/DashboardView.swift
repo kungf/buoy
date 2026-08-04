@@ -9,6 +9,7 @@ struct DashboardView: View {
     @State private var expanded: Set<String> = []
     @State private var isPinned = false
     @State private var settingsProviderId: String?
+    @State private var showCustomMetrics = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -18,6 +19,13 @@ struct DashboardView: View {
                 if store.isRefreshing {
                     ProgressView().controlSize(.small)
                 }
+                Button {
+                    showCustomMetrics = true
+                } label: {
+                    Image(systemName: "chart.bar.doc.horizontal")
+                }
+                .buttonStyle(.borderless)
+                .help("自定义指标")
                 Button {
                     Task { await store.refresh() }
                 } label: {
@@ -52,7 +60,15 @@ struct DashboardView: View {
                             error: store.providerErrors[report.providerId],
                             isExpanded: expanded.contains(report.providerId),
                             onToggle: { toggle(report.providerId) },
-                            onConfigure: { settingsProviderId = $0 }
+                            onConfigure: { id in
+                                // Custom metrics open the dedicated manager (incl. test query),
+                                // not the built-in credential form
+                                if store.isCustomProvider(id) {
+                                    showCustomMetrics = true
+                                } else {
+                                    settingsProviderId = id
+                                }
+                            }
                         )
                     }
                     // Providers with an error but never fetched (not present in reports)
@@ -106,6 +122,9 @@ struct DashboardView: View {
             if let id = settingsProviderId, let manifest = store.providerManifest(for: id) {
                 ProviderSettingsView(store: store, manifest: manifest)
             }
+        }
+        .sheet(isPresented: $showCustomMetrics) {
+            CustomMetricsSettingsView(store: store)
         }
     }
 
@@ -312,12 +331,19 @@ struct QuotaRow: View {
     }
 
     private var usageText: String {
-        let used = quota.used.map { formatNumber($0) } ?? "--"
         let limit = quota.limit.map { formatNumber($0) } ?? "--"
         if quota.type == .balance {
             return "\(quota.effectiveRemaining.map { formatNumber($0) } ?? "--") left"
         }
-        return "\(used) / \(limit)"
+        if let used = quota.used {
+            return "\(formatNumber(used)) / \(limit)"
+        }
+        // remaining+max shape (remaining semantics with a total cap): timeWindowed but only
+        // remaining — show the remaining value instead of "-- / 5000"
+        if let remaining = quota.effectiveRemaining {
+            return "\(formatNumber(remaining)) / \(limit) 剩余"
+        }
+        return "-- / \(limit)"
     }
 
     private func formatNumber(_ value: Double) -> String {

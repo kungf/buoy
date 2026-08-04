@@ -36,8 +36,46 @@ Adapter-first architecture: every provider maps onto one unified `Quota` model.
 | MiMo | Monthly Token Plan |
 | Zhipu | Monthly / weekly token quotas |
 | MiniMax | 5h rolling window + weekly |
+| Custom metrics | Your own Prometheus metric as a quota ball (see [Custom metrics](#custom-metrics)) |
 
 **Not yet**: OpenAI · Anthropic — planned next.
+
+## Custom metrics
+
+Point TokenRunway at your own Prometheus to show your internal usage — GPU quota, API budget, token consumption — as a ball next to the built-in providers. Each custom metric is one ball.
+
+**Add one**: Dashboard toolbar → `自定义指标` (chart icon) → `+`.
+
+| Field | Example | Notes |
+|---|---|---|
+| 名称 | GPU 配额 | Ball label |
+| Prometheus 地址 | `http://prom.internal:9090` | Instant-query API (`/api/v1/query`) |
+| 指标 | `gpu_usage` or `sum(gpu_usage)` | Metric name or full PromQL expression |
+| 标签 | `cluster=prod,env=cn` | Optional `xx=xx` filter, comma-separated |
+| 语义 | 已使用 / 余额 | **已使用** (default): value = consumed; **余额**: value = remaining |
+| 上限 / 总额度 | `10000` | Optional. Used → water = used/max (**full = drained**); remaining → water = remaining/max (full = healthy) |
+| 单位 | 无 / 人民币 / 美元 / Tokens / 点数 / custom | Optional |
+| 访问令牌 | — | Optional Bearer token; leave empty for open internal endpoints |
+
+**Ball shapes**
+
+| Semantics | Max | Ball |
+|---|---|---|
+| used | yes | center = usage value, water = used/max (full = drained), sub = percent |
+| used | no | center = usage value, no water level |
+| remaining | yes | center = remaining percent, water = remaining/max (full = healthy) |
+| remaining | no | balance ball (remaining / high-water, ¥ / $ badge) |
+
+**Example** — monthly API budget, consumed so far:
+
+- 名称 `本月 API 预算`, 指标 `api_budget_usage`, 标签 `team=data`, 语义 已使用, 上限 `5000`, 单位 人民币
+- The ball shows e.g. `1234` with water at 24.7% — red and breathing hard as it approaches 100%.
+
+Notes:
+- Multi-series results take the first match — use `sum(...)` / `sum by (...)` in the metric field to aggregate.
+- If your metric is already a *remaining* gauge (`budget_remaining`), pick 余额 semantics instead.
+- Config lives in `~/.trwy/config.json` (`customMetrics`), shared with `trwyctl` — `trwyctl all` includes custom metrics, `trwyctl <custom-id>` queries one.
+- Changes apply immediately (hot reload) — no restart needed.
 
 ## Requirements
 
@@ -106,7 +144,7 @@ UI           FloatingBall (NSPanel) · Dashboard (accordion) · Settings (per-pr
               │ subscribes @Published
 Service      UsageStore (ObservableObject) · ForecastEngine (burn rate/ETA)
               │ scheduling                    │ credentials
-Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · MiMo(consoleSession) · Zhipu(bearer) · MiniMax(bearer) · [OpenAI/Anthropic WIP]
+Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · MiMo(consoleSession) · Zhipu(bearer) · MiniMax(bearer) · Custom metrics(PromQL) · [OpenAI/Anthropic WIP]
               │
 Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
@@ -115,13 +153,13 @@ Four SPM targets:
 - **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) — model / auth / forecast / providers / networking
 - **TokenRunwayApp** — floating ball + dashboard UI
 - **trwyctl** — CLI (integration / debugging)
-- **TokenRunwayCoreTests** — unit tests (164/164)
+- **TokenRunwayCoreTests** — unit tests (219/219)
 
 ## Security
 
 - API keys live only in `~/.trwy/config.json` (chmod 600, outside the repo); **never committed, never logged, never sent to third parties** (M2 will migrate to Keychain).
 - `Credential` implements a redacting `CustomStringConvertible` — any `print()` shows only the first 4 characters.
-- Network is HTTPS-only (ATS + certificate validation).
+- Built-in providers are HTTPS-only (ATS + certificate validation). **Custom metrics** allow plain `http://` for internal Prometheus endpoints (ATS exemption) — a known tradeoff for single-user LAN tools; use HTTPS when the endpoint is reachable off the local network.
 
 ## Documentation
 

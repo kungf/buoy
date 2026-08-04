@@ -1,14 +1,14 @@
 import Foundation
 import TokenRunwayCore
 
-/// trwyctl - 适配器联调 harness。
-/// 凭证来源（优先级从高到低；绝不打印、不写盘、不入仓库）：
+/// trwyctl — adapter integration harness.
+/// Credential sources (highest priority first; never printed, persisted, or committed):
 ///   bearer:        env TRWY_<envPrefix>_TOKEN
 ///   volcSignature: env TRWY_<envPrefix>_AK / TRWY_<envPrefix>_SK
-///   -> ~/.trwy/config.json（CredentialStore）
-/// envPrefix 取自 manifest（DeepSeek=DEEPSEEK，火山=VOLC）；用法: trwyctl <id> | all
+///   -> ~/.trwy/config.json (CredentialStore)
+/// envPrefix comes from the manifest (DeepSeek=DEEPSEEK, Volcano=VOLC); usage: trwyctl <id> | all
 
-/// 拼出 env 变量前缀，如 "TRWY_DEEPSEEK_" / "TRWY_VOLC_"。
+/// Builds the env-var prefix, e.g. "TRWY_DEEPSEEK_" / "TRWY_VOLC_".
 private func envVarPrefix(for provider: any Provider) -> String {
     "TRWY_\(provider.manifest.envPrefix)_"
 }
@@ -27,7 +27,9 @@ func envCredential(for provider: any Provider) -> Credential? {
     case .consoleSession:
         break
     case .localCLI:
-        // 无 env 变量：登录态直接来自本机 CLI 凭证文件
+        // No env var: the login state comes straight from the local CLI credential file
+        break
+    case .none:
         break
     }
     return nil
@@ -40,6 +42,7 @@ func envHint(for provider: any Provider) -> String {
     case .volcSignature: return "env \(prefix)AK / \(prefix)SK"
     case .consoleSession: return "console session"
     case .localCLI: return "local \(provider.manifest.displayName) CLI login (~/.kimi-code)"
+    case .none: return "no auth needed"
     }
 }
 
@@ -47,7 +50,13 @@ func credential(for provider: any Provider, config: TokenRunwayConfigFile?) -> C
     if provider.manifest.authMode == .localCLI {
         return CredentialStore.localCLICredential()
     }
-    return envCredential(for: provider) ?? CredentialStore.credential(for: provider.manifest.id, from: config)
+    if let env = envCredential(for: provider) { return env }
+    if let stored = CredentialStore.credential(for: provider.manifest.id, from: config) { return stored }
+    // Custom metrics fetch without credentials (open internal endpoints).
+    // Must be Credential.none — the return type is Credential?, and a bare `.none`
+    // resolves to Optional.none (nil)
+    if provider.manifest.allowsNoCredential { return Credential.none }
+    return nil
 }
 
 func printReport(_ report: ProviderReport) {
@@ -71,11 +80,17 @@ let config = CredentialStore.load()
 
 let targets: [any Provider]
 if arg == "all" {
-    targets = ProviderRegistry.all
+    // Built-ins + user custom metrics (~/.trwy/config.json customMetrics)
+    targets = ProviderRegistry.all(includingCustom: config?.customMetrics ?? [])
 } else if let provider = ProviderRegistry.provider(for: arg) {
     targets = [provider]
+} else if let custom = config?.customMetrics.first(where: { $0.id == arg }) {
+    // Single custom metric: trwyctl <custom-id>
+    targets = [CustomMetricsProvider(config: custom)]
 } else {
-    print("unknown provider: \(arg). Known: \(ProviderRegistry.ids.joined(separator: ", "))")
+    let customIds = (config?.customMetrics ?? []).map(\.id)
+    let known = (ProviderRegistry.ids + customIds).joined(separator: ", ")
+    print("unknown provider: \(arg). Known: \(known)")
     exit(2)
 }
 

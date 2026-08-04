@@ -6,12 +6,15 @@ final class CredentialStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("trwy-test-\(UUID().uuidString).json")
+        // Dedicated subdir: save chmods the dir to 0700 and must not touch the shared system temp dir T
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("trwy-test-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        tempURL = dir.appendingPathComponent("config.json")
     }
 
     override func tearDown() {
-        try? FileManager.default.removeItem(at: tempURL)
+        try? FileManager.default.removeItem(at: tempURL.deletingLastPathComponent())
         super.tearDown()
     }
 
@@ -61,7 +64,7 @@ final class CredentialStoreTests: XCTestCase {
     }
 
     func testLoadReturnsNilForMissingFile() {
-        XCTAssertNil(CredentialStore.load(from: tempURL)) // 未写入任何文件
+        XCTAssertNil(CredentialStore.load(from: tempURL)) // nothing written yet
     }
 
     func testSaveRoundTrip() throws {
@@ -95,5 +98,28 @@ final class CredentialStoreTests: XCTestCase {
         // Assert
         let loaded = CredentialStore.load(from: tempURL)
         XCTAssertEqual(loaded?.providers["deepseek"]?.token, "new-token")
+    }
+
+    /// File 0600 / dir 0700 are the only local protection for the token file — locked in:
+    /// a pre-existing dir (old version / manual) won't pick up createDirectory permissions,
+    /// so save must force them.
+    func testSaveEnforcesFileAndDirectoryPermissions() throws {
+        // Arrange: create a loose-permission dir first (simulating an old-version leftover); no file yet
+        let dir = tempURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int,
+                       0o755 & 0o777)
+
+        // Act: save a config containing a token
+        var config = TokenRunwayConfigFile(providers: [:])
+        config.providers["deepseek"] = ProviderCredentials(auth: "bearer", token: "sk-test")
+        try CredentialStore.save(config, to: tempURL)
+
+        // Assert: the dir is tightened to 0700 and the file to 0600
+        let dirPerms = try FileManager.default.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int
+        XCTAssertEqual(dirPerms ?? 0, 0o700, "config dir must be 0700")
+        let filePerms = try FileManager.default.attributesOfItem(atPath: tempURL.path)[.posixPermissions] as? Int
+        XCTAssertEqual(filePerms ?? 0, 0o600, "config file must be 0600")
     }
 }

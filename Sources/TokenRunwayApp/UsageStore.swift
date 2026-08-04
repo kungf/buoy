@@ -22,9 +22,10 @@ final class UsageStore: ObservableObject {
     /// Polling paused (toggled from the right-click menu)
     @Published var pollingPaused: Bool = false
 
-    private let providers: [String: any Provider]
+    /// var: custom metrics can hot-reload after save (reloadCustomMetrics)
+    private var providers: [String: any Provider]
     /// Provider init order (gives a stable order for "the first ball" and cluster arrangement)
-    private let providerOrder: [String]
+    private var providerOrder: [String]
     private let preferences: SelectionStorage
     private var pollTasks: [String: Task<Void, Never>] = [:]
     private var consecutiveFailures: [String: Int] = [:]
@@ -33,10 +34,12 @@ final class UsageStore: ObservableObject {
     /// to cache.json.
     private var forecast = ForecastEngine()
 
-    init(providers: [any Provider] = ProviderRegistry.all,
+    init(providers: [any Provider]? = nil,
          preferences: SelectionStorage = Preferences()) {
-        self.providerOrder = providers.map { $0.manifest.id }
-        self.providers = Dictionary(providers.map { ($0.manifest.id, $0) },
+        // When not explicitly injected: built-ins + user custom metrics (~/.trwy/config.json customMetrics)
+        let resolved = providers ?? ProviderRegistry.all(includingCustom: CustomMetricConfigStore.load())
+        self.providerOrder = resolved.map { $0.manifest.id }
+        self.providers = Dictionary(resolved.map { ($0.manifest.id, $0) },
                                     uniquingKeysWith: { first, _ in first })
         self.preferences = preferences
     }
@@ -53,19 +56,60 @@ final class UsageStore: ObservableObject {
         }
         loadCache()
         for (index, id) in providerOrder.enumerated() {
-            guard let provider = providers[id] else { continue }
-            let base = provider.manifest.defaultPollInterval
-            pollTasks[id] = Task { [weak self] in
-                // Stagger: each provider starts 5s apart to avoid a synchronized network burst (DESIGN.md §6)
-                try? await Task.sleep(for: .seconds(Double(index) * 5))
-                while !Task.isCancelled {
-                    guard let self else { return }
-                    if !self.pollingPaused { await self.fetchOne(id) }
-                    let delay = self.backoff.delay(base: base, afterFailures: self.consecutiveFailures[id] ?? 0)
-                    try? await Task.sleep(for: .seconds(delay))
-                }
+            startPolling(id: id, stagger: Double(index) * 5)
+        }
+    }
+
+    /// Start one provider's polling task. start() staggers 5s apart to avoid a synchronized
+    /// network burst (DESIGN.md §6); hot-reloaded custom metrics start immediately (stagger=1).
+    private func startPolling(id: String, stagger: TimeInterval) {
+        guard let provider = providers[id] else { return }
+        let base = provider.manifest.defaultPollInterval
+        pollTasks[id]?.cancel()
+        pollTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(stagger))
+            while !Task.isCancelled {
+                guard let self else { return }
+                if !self.pollingPaused { await self.fetchOne(id) }
+                let delay = self.backoff.delay(base: base, afterFailures: self.consecutiveFailures[id] ?? 0)
+                try? await Task.sleep(for: .seconds(delay))
             }
         }
+    }
+
+    /// Hot-reload after custom-metric config changes (settings panel save/delete):
+    /// new ones register and start polling; edits replace the instance (the poll loop re-reads
+    /// providers[id] every round, no task restart); deletions cancel polling, clean up
+    /// reports/errors/selection and persist the cache (otherwise the deleted metric
+    /// resurrects from cache.json on restart).
+    func reloadCustomMetrics() {
+        let configs = CustomMetricConfigStore.load()
+        let activeIds = Set(configs.map(\.id))
+        // Remove deleted ones
+        for id in Array(providers.keys) where isCustomProvider(id) && !activeIds.contains(id) {
+            providers.removeValue(forKey: id)
+            providerOrder.removeAll { $0 == id }
+            pollTasks[id]?.cancel()
+            pollTasks.removeValue(forKey: id)
+            consecutiveFailures.removeValue(forKey: id)
+            providerErrors.removeValue(forKey: id)
+            reports.removeAll { $0.providerId == id }
+        }
+        // Add/update: register (always replace the instance so edits take effect immediately) + start polling
+        for config in configs {
+            if providers[config.id] == nil {
+                providerOrder.append(config.id)
+            }
+            providers[config.id] = CustomMetricsProvider(config: config)
+            if pollTasks[config.id] == nil {
+                startPolling(id: config.id, stagger: 1)
+            }
+        }
+        // If a deleted provider was on the ball cluster, drop it too (keep the selection valid)
+        let valid = providerOrder
+        selectedProviderIds = selectedProviderIds.filter { valid.contains($0) }
+        persistSelection()
+        saveCache()
     }
 
     func stop() {
@@ -101,28 +145,47 @@ final class UsageStore: ObservableObject {
     /// (drives backoff, DESIGN.md §6).
     private func fetchOne(_ id: String) async {
         guard let provider = providers[id] else { return }
-        // localCLI 模式不读 ~/.trwy/config.json，直接指向本机 CLI 登录态目录
-        let credential: Credential?
-        if provider.manifest.authMode == .localCLI {
-            credential = CredentialStore.localCLICredential()
-        } else {
-            credential = CredentialStore.credential(for: id, from: CredentialStore.load())
-        }
-        guard let credential else {
+        guard let credential = resolveCredential(for: provider) else {
             providerErrors[id] = Self.notConfiguredError
             return
         }
         do {
             let report = try await provider.fetchUsage(credential: credential)
+            // The provider may have been deleted during the await (custom-metric hot removal):
+            // re-check, otherwise the deleted report/error row resurrects as a ghost nothing can clean up
+            guard providers[id] != nil else { return }
             upsert(report)
             providerErrors[id] = nil
             consecutiveFailures[id] = 0
             saveCache()
             autoSwitchIfNeeded()
         } catch {
+            guard providers[id] != nil else { return }
             consecutiveFailures[id] = (consecutiveFailures[id] ?? 0) + 1
             providerErrors[id] = Self.describe(error)
         }
+    }
+
+    /// Custom-metric provider detection by type rather than id prefix: hand-edited
+    /// config.json ids are still recognized by hot-removal and gear routing
+    func isCustomProvider(_ id: String) -> Bool {
+        providers[id] is CustomMetricsProvider
+    }
+
+    /// Credential resolution: localCLI reads the local CLI login dir; custom metrics
+    /// (allowsNoCredential) get `.none` injected when nothing is stored — open internal
+    /// endpoints fetch bare, no "Not configured".
+    private func resolveCredential(for provider: any Provider) -> Credential? {
+        if provider.manifest.authMode == .localCLI {
+            return CredentialStore.localCLICredential()
+        }
+        let stored = CredentialStore.credential(for: provider.manifest.id, from: CredentialStore.load())
+        // Must be Credential.none — the return type is Credential?, and a bare `.none`
+        // resolves to Optional.none (nil)
+        if stored == nil, provider.manifest.allowsNoCredential {
+            return Credential.none
+        }
+        return stored
     }
 
     private func upsert(_ report: ProviderReport) {
@@ -154,11 +217,15 @@ final class UsageStore: ObservableObject {
     private func loadCache() {
         guard let cache = CacheStore.load() else { return }
         let order = providerOrder
-        reports = cache.reports.sorted { lhs, rhs in
-            let li = order.firstIndex(of: lhs.providerId) ?? Int.max
-            let ri = order.firstIndex(of: rhs.providerId) ?? Int.max
-            return li < ri
-        }
+        // Filter out providers that no longer exist (e.g. custom metrics deleted before
+        // restart) so ghost reports can't resurrect
+        reports = cache.reports
+            .filter { order.contains($0.providerId) }
+            .sorted { lhs, rhs in
+                let li = order.firstIndex(of: lhs.providerId) ?? Int.max
+                let ri = order.firstIndex(of: rhs.providerId) ?? Int.max
+                return li < ri
+            }
         forecast = cache.forecast
     }
 
@@ -356,8 +423,9 @@ final class UsageStore: ObservableObject {
             if providerErrors[providerId] == Self.notConfiguredError { return .notConfigured }
             return providerErrors[providerId] != nil ? .error : .idle
         }
-        // 拉取错误优先（与 BallStateResolver 的 error 最高优先级一致）：
-        // cookie 过期(401) 等瞬时错误应显示 error 而非永久态 expired，避免误导
+        // Fetch errors take precedence (consistent with BallStateResolver's error being
+        // highest priority): transient errors like expired cookies (401) must show error
+        // rather than the permanent expired state, to avoid misleading
         if providerErrors[providerId] != nil { return .error }
         if report.planExpired == true { return .expired }
         let interval = pollInterval(forProvider: providerId)
@@ -487,7 +555,9 @@ final class UsageStore: ObservableObject {
 
         // Upper (small): last-5h spend ("−¥x.xx"); Lower (big): balance. The 5h window is
         // labeled on the hover card (HoverSummaryView), not on the ball itself.
-        let spentText = consumedOpt.map { "−¥\(String(format: "%.2f", $0))" } ?? "--"
+        // Symbol comes from currency (custom USD/unitless balances no longer hardcode ¥)
+        let symbol = report.balance.map { currencySymbol($0.currency) } ?? ""
+        let spentText = consumedOpt.map { "−\(symbol)\(String(format: "%.2f", $0))" } ?? "--"
 
         return BallModel(mode: .balance, ringUsed: nil, midRingUsed: nil,
                          coreLevel: level, ringHealth: nil, midRingHealth: nil, coreHealth: level,
@@ -510,17 +580,30 @@ final class UsageStore: ObservableObject {
         // passed reads as 0% even if the cached `used` value is stale
         // (e.g. the Mac slept through the reset and polling paused).
         let now = Date()
+        let corePct = coreQ?.percentUsedAt(now: now)
         let ringUsed = ringQ?.percentUsedAt(now: now)
         let midUsed = midQ?.percentUsedAt(now: now)
-        let coreLevel = coreQ?.percentUsedAt(now: now).map { 1 - $0 }
+        // Water direction: used semantics = used proportion (full = drained); default = remaining
+        // proportion (full = healthy). Red/breathing semantics stay (used high = little left =
+        // danger; HealthScore is automatically correct).
+        let coreLevel = coreQ?.showsUsedLevel == true ? corePct : corePct.map { 1 - $0 }
         let isError = state == .error
         let center: String
         if isError { center = "!" }
+        else if coreQ?.showsUsedLevel == true, let used = coreQ?.used {
+            // used semantics: center = the usage value
+            center = Self.formatNumber(used)
+        }
         else if let coreLevel { center = "\(Int((coreLevel * 100).rounded()))%" }
         else { center = "--" }
         let sub: String
         if isError { sub = "error" }
         else if state == .expired { sub = "expired" }
+        else if coreQ?.showsUsedLevel == true {
+            // used semantics: with max → used percent; without max → unit abbreviation
+            if let pct = corePct { sub = "\(Int((pct * 100).rounded()))%" }
+            else { sub = Self.unitSymbol(coreQ?.unit) }
+        }
         else { sub = shortLabel(coreQ?.id ?? "") }
         // Each channel colored by its own remaining health (DESIGN §8.3 independent coloring);
         // core no longer uses state, fixing "5h at 7% turns yellow". `now`-aware so a window
@@ -535,6 +618,24 @@ final class UsageStore: ObservableObject {
                          centerText: center, subText: sub, spentRecentText: nil, currencyBadge: nil,
                          state: state, breathUrgency: breath, isStale: stale,
                          alertBadges: badges)
+    }
+
+    /// used-semantics ball center: integers without decimals (880), else one decimal (1234.5)
+    private static func formatNumber(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    /// Unit abbreviation for used semantics without max (ball sub text)
+    private static func unitSymbol(_ unit: TokenRunwayCore.Unit?) -> String {
+        switch unit {
+        case .cny: return "¥"
+        case .usd: return "$"
+        case .tokens: return "tok"
+        case .credits: return "pt"
+        case .custom(let text): return text
+        case .some(.none): return ""
+        case nil: return ""
+        }
     }
 
     /// Breakthrough badges (DESIGN.md §8.1): an unselected provider in an alerting state raises a

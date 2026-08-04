@@ -1,7 +1,8 @@
 import Foundation
 
-/// 本地缓存（DESIGN.md §6：lastGoodReport + 样本环形 buffer 持久化，重启不冷启动）。
-/// 存 ~/.trwy/cache.json（仓库外，与 config.json 同目录；含 ProviderReport + ForecastEngine 样本）。
+/// Local cache (DESIGN.md §6: lastGoodReport + sample ring-buffer persisted, no cold start
+/// on restart). Stored at ~/.trwy/cache.json (outside the repo, same dir as config.json;
+/// holds ProviderReport + ForecastEngine samples).
 public struct TokenRunwayCache: Codable, Sendable, Equatable {
     public let reports: [ProviderReport]
     public let forecast: ForecastEngine
@@ -13,10 +14,14 @@ public struct TokenRunwayCache: Codable, Sendable, Equatable {
 }
 
 public enum CacheStore {
+    /// Cache path. get-set: tests can redirect to a temp file (default ~/.trwy/cache.json)
     public static var defaultURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".trwy/cache.json")
+        get { defaultURLStorage }
+        set { defaultURLStorage = newValue }
     }
+    /// nonisolated(unsafe): test redirect only; production path is read-only
+    private nonisolated(unsafe) static var defaultURLStorage = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".trwy/cache.json")
 
     public static func load(from url: URL = defaultURL) -> TokenRunwayCache? {
         guard let data = try? Data(contentsOf: url) else { return nil }

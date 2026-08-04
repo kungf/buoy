@@ -63,6 +63,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <!-- Custom metrics target internal http:// Prometheus by design (prom.internal:9090 etc.):
+         ATS rejects plaintext by default, so it needs an exemption. Tokens over plain HTTP
+         are a known tradeoff for single-user LAN tools. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key><true/>
+    </dict>
 </dict>
 </plist>
 PLIST

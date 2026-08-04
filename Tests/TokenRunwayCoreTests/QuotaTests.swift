@@ -71,4 +71,36 @@ final class QuotaTests: XCTestCase {
         // Act & Assert
         XCTAssertEqual(q.percentUsedAt(now: t0) ?? -1, 0.2, accuracy: 1e-9)
     }
+
+    // MARK: Codable (showsUsedLevel cache round-trip)
+
+    /// Regression: defaulted `let` properties are silently dropped by the synthesized decoder —
+    /// used-semantics water direction must survive the cache.json round-trip or it reverts on restart
+    func testShowsUsedLevelSurvivesCodableRoundtrip() throws {
+        // Arrange
+        let q = Quota(id: "custom-1.main", type: .timeWindowed, label: "用量",
+                      unit: .tokens, used: 80, limit: 100, showsUsedLevel: true)
+
+        // Act
+        let data = try JSONEncoder().encode(q)
+        let decoded = try JSONDecoder().decode(Quota.self, from: data)
+
+        // Assert
+        XCTAssertTrue(decoded.showsUsedLevel, "used-semantics water direction must survive")
+        XCTAssertEqual(decoded.used, 80)
+        XCTAssertEqual(decoded.limit, 100)
+    }
+
+    /// Legacy caches without showsUsedLevel decode to false (default remaining semantics, backward-compatible)
+    func testDecodesLegacyCacheWithoutShowsUsedLevel() throws {
+        // Arrange: legacy JSON without the field
+        let json = #"{"id":"volcano.5h","type":"timeWindowed","label":"5h","unit":"credits","used":12.5,"limit":50}"#
+
+        // Act
+        let decoded = try JSONDecoder().decode(Quota.self, from: Data(json.utf8))
+
+        // Assert
+        XCTAssertFalse(decoded.showsUsedLevel)
+        XCTAssertEqual(decoded.percentUsed, 0.25)
+    }
 }
