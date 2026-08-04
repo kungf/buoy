@@ -1,10 +1,11 @@
 import Foundation
 
-/// Custom metrics provider: Prometheus instant-query adapter.
+/// Custom metrics provider: plain HTTP JSON adapter (output-contract mode).
 /// One CustomMetricConfig instance maps to one provider (id = config.id):
-/// GET {baseURL}/api/v1/query?query={metric}{labels}, takes result[0].value.
-/// Semantics × max (see MetricSemantics): used+max → used water; used no-max → plain value;
-/// remaining+max → remaining water; remaining no-max → balance ball.
+/// GET {url} — {userId} placeholder or user_id query param, optional Bearer — expects the
+/// output contract: {"value": number|string, "max"?, "semantics"?, "unit"?, "label"?, "updatedAt"?}.
+/// Output fields override the config; missing optional fields fall back to the config.
+/// Shape mapping (used/remaining × max) is CustomMetricConfig.makeReport.
 public struct CustomMetricsProvider: Provider {
     public let manifest: ProviderManifest
     public let config: CustomMetricConfig
@@ -16,7 +17,7 @@ public struct CustomMetricsProvider: Provider {
             id: config.id,
             displayName: config.name,
             authMode: .bearer,
-            defaultBaseURL: config.baseURL,
+            defaultBaseURL: config.url,
             allowsBaseURLOverride: false,
             defaultPollInterval: 300,
             shortName: nil,
@@ -31,21 +32,12 @@ public struct CustomMetricsProvider: Provider {
     public let supportedQuotaTypes: [QuotaType] = [.timeWindowed, .balance]
 
     public func fetchUsage(credential: Credential) async throws -> ProviderReport {
-        guard let query = config.query else {
-            throw ProviderError.parse("custom: malformed metric/label config")
+        guard let urlString = config.sourceURL else {
+            throw ProviderError.parse("custom: missing url (or empty userId with a {userId} placeholder)")
         }
-        guard var components = URLComponents(string: config.baseURL),
-              components.scheme != nil, components.host != nil else {
-            throw ProviderError.network("invalid baseURL")
+        guard let url = URL(string: urlString) else {
+            throw ProviderError.network("invalid url")
         }
-        components.path = components.path.hasSuffix("/")
-            ? components.path + "api/v1/query"
-            : components.path + "/api/v1/query"
-        components.queryItems = [URLQueryItem(name: "query", value: query)]
-        guard let url = components.url else {
-            throw ProviderError.network("invalid baseURL")
-        }
-
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         switch credential {
@@ -64,85 +56,99 @@ public struct CustomMetricsProvider: Provider {
 
     // MARK: - Parsing
 
-    /// Prometheus instant-query response (official format): value = [timestamp, numeric string]
-    struct PrometheusResponse: Decodable {
-        let status: String
-        let data: DataDTO?
-        struct DataDTO: Decodable {
-            let resultType: String?
-            let result: [ResultDTO]?
+    /// Output contract DTO. value is required (nil = missing); the rest is optional.
+    /// updatedAt is accepted implicitly and ignored — no staleness check yet (YAGNI).
+    struct UsageOutput: Decodable {
+        let value: Double?
+        let max: Double?
+        let semantics: String?
+        let unit: String?
+        let label: String?
+        let error: String?
+
+        // Hand-written init(from:) (Decodable-only type) → the compiler doesn't synthesize
+        // CodingKeys; declare it explicitly
+        private enum CodingKeys: String, CodingKey {
+            case value, max, semantics, unit, label, error
         }
-        struct ResultDTO: Decodable {
-            let value: SampleDTO?
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            value = container.contains(.value) ? try container.decode(ValueDTO.self, forKey: .value).double : nil
+            max = try container.decodeIfPresent(Double.self, forKey: .max)
+            semantics = try container.decodeIfPresent(String.self, forKey: .semantics)
+            unit = try container.decodeIfPresent(String.self, forKey: .unit)
+            label = try container.decodeIfPresent(String.self, forKey: .label)
+            error = try container.decodeIfPresent(String.self, forKey: .error)
         }
-        struct SampleDTO: Decodable {
-            let timestamp: Double
-            let value: String
+
+        /// Flexible value: JSON number or numeric string (gateways often stringify numbers)
+        struct ValueDTO: Decodable {
+            let double: Double
             init(from decoder: Decoder) throws {
-                var container = try decoder.unkeyedContainer()
-                timestamp = try container.decode(Double.self)
-                value = try container.decode(String.self)
+                let single = try decoder.singleValueContainer()
+                if let number = try? single.decode(Double.self) {
+                    double = number
+                } else if let text = try? single.decode(String.self), let parsed = Double(text) {
+                    double = parsed
+                } else {
+                    throw DecodingError.dataCorruptedError(in: single,
+                        debugDescription: "value must be a number or a numeric string")
+                }
             }
         }
     }
 
     public static func parse(data: Data, config: CustomMetricConfig,
                              now: Date = Date()) throws -> ProviderReport {
-        let decoded: PrometheusResponse
+        let decoded: UsageOutput
         do {
-            decoded = try JSONDecoder().decode(PrometheusResponse.self, from: data)
+            decoded = try JSONDecoder().decode(UsageOutput.self, from: data)
         } catch {
             throw ProviderError.parse("custom: \(error.localizedDescription)")
         }
-        // status=error exposes only the error state, never server free text (DESIGN.md §10)
-        guard decoded.status == "success" else {
-            throw ProviderError.parse("custom: prometheus status=error")
+        // {"error": "..."} = business error; expose only the error state, never server free text
+        if let serverError = decoded.error, !serverError.isEmpty {
+            throw ProviderError.parse("custom: server error")
         }
-        // No data = wrong metric/label; fail loudly instead of a silent empty report
-        guard let sample = decoded.data?.result?.first?.value else {
-            throw ProviderError.parse("custom: no data for query")
-        }
-        // Double("NaN")/Double("Inf") parse successfully but would poison percent/remaining math — reject
-        guard let used = Double(sample.value), used.isFinite else {
-            throw ProviderError.parse("custom: non-numeric value")
+        // NaN/Inf would poison percent/remaining math — reject. JSON null → decode failure above.
+        guard let value = decoded.value, value.isFinite else {
+            throw ProviderError.parse("custom: missing or non-numeric value")
         }
 
-        // Remaining semantics: the value = amount left.
-        if config.semantics == .remaining {
-            if let max = config.max, max > 0 {
-                // remaining + max: water = remaining/max (full = healthy, same as built-in providers)
-                let quota = Quota(id: "\(config.id).main", type: .timeWindowed,
-                                  label: config.name, unit: config.unit ?? .none,
-                                  limit: max, remaining: used)
-                return ProviderReport(providerId: config.id, fetchedAt: now, quotas: [quota])
+        // Output overrides config; missing optional fields fall back to the config (immutable copy)
+        var effective = config
+        if let raw = decoded.semantics {
+            guard let semantics = MetricSemantics(rawValue: raw) else {
+                throw ProviderError.parse("custom: invalid semantics")
             }
-            // remaining without max: balance ball. BalanceInfo is required so ballModel routes to the
-            // balance shape (otherwise the windowed branch renders "--"). currency maps ¥/$ badge.
-            let quota = Quota(id: "\(config.id).main", type: .balance,
-                              label: config.name, unit: config.unit ?? .none,
-                              remaining: used)
-            let currency: String
-            switch config.unit {
-            case .cny: currency = "CNY"
-            case .usd: currency = "USD"
-            default: currency = ""
-            }
-            return ProviderReport(providerId: config.id, fetchedAt: now, quotas: [quota],
-                                  balance: BalanceInfo(currency: currency, total: used,
-                                                       granted: 0, toppedUp: 0))
+            effective.semantics = semantics
         }
+        if let max = decoded.max { effective.max = max > 0 ? max : nil }
+        if let unitText = decoded.unit {
+            let trimmed = unitText.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased() == "none" {
+                effective.unit = .none
+            } else if !trimmed.isEmpty {
+                effective.unit = Self.unit(from: trimmed)
+            }
+            // empty unit text → keep the config's unit
+        }
+        let label = decoded.label.flatMap {
+            $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0
+        }
+        return effective.makeReport(value: value, label: label ?? config.name, now: now)
+    }
 
-        // Used semantics (default): the value = consumed. With max → used water (full = drained); without → plain value
-        let quota: Quota
-        if let max = config.max, max > 0 {
-            quota = Quota(id: "\(config.id).main", type: .timeWindowed,
-                          label: config.name, unit: config.unit ?? .none,
-                          used: used, limit: max, showsUsedLevel: true)
-        } else {
-            quota = Quota(id: "\(config.id).main", type: .timeWindowed,
-                          label: config.name, unit: config.unit ?? .none,
-                          used: used, showsUsedLevel: true)
+    /// Map an output unit string to the Unit enum: known tokens → fixed cases,
+    /// anything else → .custom (e.g. "GB" → .custom("GB"))
+    static func unit(from text: String) -> Unit {
+        switch text.lowercased() {
+        case "cny": return .cny
+        case "usd": return .usd
+        case "tokens": return .tokens
+        case "credits": return .credits
+        default: return .custom(text)
         }
-        return ProviderReport(providerId: config.id, fetchedAt: now, quotas: [quota])
     }
 }

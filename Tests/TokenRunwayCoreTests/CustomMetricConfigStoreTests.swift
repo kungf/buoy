@@ -21,7 +21,7 @@ final class CustomMetricConfigStoreTests: XCTestCase {
     }
 
     private func makeConfig(id: String) -> CustomMetricConfig {
-        CustomMetricConfig(id: id, name: "预算", baseURL: "http://prom:9090", metric: "usage")
+        CustomMetricConfig(id: id, name: "预算", url: "https://api.corp.com/v1/usage")
     }
 
     func testLoadReturnsEmptyWhenFileMissing() {

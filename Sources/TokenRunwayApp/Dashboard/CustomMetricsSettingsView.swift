@@ -41,7 +41,7 @@ struct CustomMetricsSettingsView: View {
                         .foregroundStyle(.tertiary)
                     Text("还没有自定义指标")
                         .font(.subheadline)
-                    Text("添加一个 Prometheus 指标，如企业内部的 API 预算用量")
+                    Text("添加一个 HTTP 接口，如企业内部的 API 预算用量")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -120,8 +120,8 @@ struct CustomMetricsSettingsView: View {
     }
 
     private func querySummary(_ config: CustomMetricConfig) -> String {
-        var summary = config.baseURL + " · " + config.metric
-        if !config.label.isEmpty { summary += "{" + config.label + "}" }
+        var summary = config.url
+        if !config.userId.isEmpty { summary += " · user:\(config.userId)" }
         return summary
     }
 
@@ -178,7 +178,7 @@ struct CustomMetricsSettingsView: View {
     }
 }
 
-/// Add/edit custom-metric form. Required: name, Prometheus URL, metric; optional: label, cap, unit, token.
+/// Add/edit custom-metric form. Required: name, endpoint URL; optional: user id, cap, unit, token.
 struct CustomMetricEditorView: View {
     /// nil = creating a new one
     let config: CustomMetricConfig?
@@ -187,9 +187,8 @@ struct CustomMetricEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
-    @State private var baseURL = ""
-    @State private var metric = ""
-    @State private var label = ""
+    @State private var urlText = ""
+    @State private var userIdText = ""
     @State private var semanticsChoice = 0   // 0 = used (default), 1 = remaining
     @State private var maxText = ""
     @State private var unitChoice = 0
@@ -216,18 +215,13 @@ struct CustomMetricEditorView: View {
                     .textFieldStyle(.roundedBorder)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Prometheus 地址").font(.caption.weight(.medium))
-                TextField("http://prom.internal:9090", text: $baseURL)
+                Text("接口地址").font(.caption.weight(.medium))
+                TextField("https://api.corp.com/v1/usage?team=data", text: $urlText)
                     .textFieldStyle(.roundedBorder)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("指标").font(.caption.weight(.medium))
-                TextField("如：api_budget_usage 或 sum(api_budget_usage)", text: $metric)
-                    .textFieldStyle(.roundedBorder)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("标签（可选）").font(.caption.weight(.medium))
-                TextField("如：team=data,env=prod", text: $label)
+                Text("用户 ID（可选）").font(.caption.weight(.medium))
+                TextField("唯一标识当前用户，如 wyang", text: $userIdText)
                     .textFieldStyle(.roundedBorder)
             }
             VStack(alignment: .leading, spacing: 6) {
@@ -302,13 +296,11 @@ struct CustomMetricEditorView: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
-            && !metric.trimmingCharacters(in: .whitespaces).isEmpty
+            && !urlText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var canTest: Bool {
-        !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
-            && !metric.trimmingCharacters(in: .whitespaces).isEmpty
+        !urlText.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var parsedMax: Double? {
@@ -344,9 +336,8 @@ struct CustomMetricEditorView: View {
         return CustomMetricConfig(
             id: id ?? config?.id ?? "custom-\(UUID().uuidString)",
             name: name.trimmingCharacters(in: .whitespaces),
-            baseURL: baseURL.trimmingCharacters(in: .whitespaces),
-            metric: metric.trimmingCharacters(in: .whitespaces),
-            label: label.trimmingCharacters(in: .whitespaces),
+            url: urlText.trimmingCharacters(in: .whitespaces),
+            userId: userIdText.trimmingCharacters(in: .whitespaces),
             max: parsedMax,   // used = consumption cap; remaining = total cap (remaining/total)
             unit: unit,
             semantics: semantics
@@ -398,9 +389,8 @@ struct CustomMetricEditorView: View {
     private func loadExisting() {
         guard let config else { return }
         name = config.name
-        baseURL = config.baseURL
-        metric = config.metric
-        label = config.label
+        urlText = config.url
+        userIdText = config.userId
         semanticsChoice = config.semantics == .remaining ? 1 : 0
         if let max = config.max { maxText = String(max) }
         switch config.unit {

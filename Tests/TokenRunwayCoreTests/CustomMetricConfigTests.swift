@@ -1,134 +1,111 @@
 import XCTest
 @testable import TokenRunwayCore
 
-/// CustomMetricConfig: label parsing and PromQL query building for user-defined metrics.
+/// CustomMetricConfig: user-defined metric config for the output-contract HTTP adapter.
+/// Covers URL construction (sourceURL), shape mapping (makeReport), Codable round-trips
+/// and legacy-config tolerance.
 final class CustomMetricConfigTests: XCTestCase {
 
-    private func makeConfig(label: String = "", metric: String = "api_budget_usage") -> CustomMetricConfig {
-        CustomMetricConfig(name: "本月 API 预算", baseURL: "http://prom.internal:9090",
-                           metric: metric, label: label)
+    private func makeConfig(url: String = "https://api.corp.com/v1/usage", userId: String = "wyang",
+                            max: Double? = nil, unit: TokenRunwayCore.Unit? = nil,
+                            semantics: MetricSemantics = .used) -> CustomMetricConfig {
+        CustomMetricConfig(id: "custom-1", name: "GPU 配额",
+                           url: url, userId: userId, max: max, unit: unit, semantics: semantics)
     }
 
-    // MARK: labelPairs
+    // MARK: sourceURL
 
-    func testLabelPairsParsesSinglePair() throws {
+    func testSourceURLReplacesUserIdPlaceholder() {
+        // Arrange: RESTful path with {userId} placeholder
+        let config = makeConfig(url: "https://api.corp.com/v1/users/{userId}/usage")
+
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL, "https://api.corp.com/v1/users/wyang/usage")
+    }
+
+    func testSourceURLPercentEncodesUserIdInPlaceholder() {
+        // Arrange: user id with reserved characters must not break the URL
+        let config = makeConfig(url: "https://api.corp.com/v1/users/{userId}/usage", userId: "a b&c")
+
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL, "https://api.corp.com/v1/users/a%20b%26c/usage")
+    }
+
+    func testSourceURLAppendsUserIdQueryWhenNoPlaceholder() {
+        // Act / Assert
+        XCTAssertEqual(makeConfig().sourceURL, "https://api.corp.com/v1/usage?user_id=wyang")
+    }
+
+    func testSourceURLAppendsUserIdToExistingQuery() {
+        // Arrange: URL already carries query params → user_id joins with &
+        let config = makeConfig(url: "https://api.corp.com/v1/usage?team=data")
+
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL, "https://api.corp.com/v1/usage?team=data&user_id=wyang")
+    }
+
+    func testSourceURLDoesNotDuplicateExistingUserIdQuery() {
+        // Arrange: URL already has user_id (hand-edited config) → not appended twice
+        let config = makeConfig(url: "https://api.corp.com/v1/usage?user_id=alice", userId: "bob")
+
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL, "https://api.corp.com/v1/usage?user_id=alice")
+    }
+
+    func testSourceURLWithoutUserIdKeepsURLAsIs() {
         // Arrange
-        let config = makeConfig(label: "team=data")
+        let config = makeConfig(userId: "")
 
-        // Act
-        let pairs = try XCTUnwrap(config.labelPairs)
-
-        // Assert
-        XCTAssertEqual(pairs.map(\.key), ["team"])
-        XCTAssertEqual(pairs.map(\.value), ["data"])
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL, "https://api.corp.com/v1/usage")
     }
 
-    func testLabelPairsParsesMultiplePairs() throws {
+    /// Placeholder present but no user id configured → nil (config error; a bare placeholder
+    /// would hit a dangling path like /users//usage)
+    func testSourceURLPlaceholderWithoutUserIdReturnsNil() {
         // Arrange
-        let config = makeConfig(label: "team=data,env=prod")
+        let config = makeConfig(url: "https://api.corp.com/v1/users/{userId}/usage", userId: "")
 
-        // Act
-        let pairs = try XCTUnwrap(config.labelPairs)
-
-        // Assert
-        XCTAssertEqual(pairs.map(\.key), ["team", "env"])
-        XCTAssertEqual(pairs.map(\.value), ["data", "prod"])
+        // Act / Assert
+        XCTAssertNil(config.sourceURL)
     }
 
-    func testLabelPairsTrimsWhitespace() throws {
+    func testSourceURLNilWhenURLEmpty() {
         // Arrange
-        let config = makeConfig(label: " team = data , env = prod ")
+        let config = makeConfig(url: "")
 
-        // Act
-        let pairs = try XCTUnwrap(config.labelPairs)
-
-        // Assert
-        XCTAssertEqual(pairs.map(\.key), ["team", "env"])
-        XCTAssertEqual(pairs.map(\.value), ["data", "prod"])
+        // Act / Assert
+        XCTAssertNil(config.sourceURL)
     }
 
-    func testLabelPairsEmptyLabelIsEmptyArray() {
-        // Arrange / Act
-        let pairs = makeConfig(label: "").labelPairs
-
-        // Assert
-        XCTAssertEqual(pairs?.count, 0)
-    }
-
-    /// Malformed labels (missing =, empty key/value, empty segments) must return nil so the
-    /// fetch layer errors instead of silently dropping labels. "team==data" is legal: values
-    /// may be any string (=data) and are not rejected.
-    func testLabelPairsRejectsMalformedPairs() {
-        // Arrange / Act / Assert
-        for bad in ["team", "=data", "team=", "a=b,", ",a=b", "a=b,,c=d"] {
-            let config = makeConfig(label: bad)
-            XCTAssertNil(config.labelPairs, "should reject malformed label: \(bad)")
-        }
-    }
-
-    /// `=` inside a value is preserved (maxSplits=1 splits at the first =)
-    func testLabelPairsKeepsEqualsInsideValue() throws {
+    /// Regression (code review): "+" must be strictly encoded in the query-param path too —
+    /// form-urlencoded backends decode "+" as a space, which would resolve the wrong identity
+    /// (e.g. "alice+ops@corp.com" → "alice ops@corp.com")
+    func testSourceURLPercentEncodesPlusInQueryParam() {
         // Arrange
-        let config = makeConfig(label: "auth=basic=yes")
+        let config = makeConfig(userId: "alice+ops@corp.com")
 
-        // Act
-        let pairs = try XCTUnwrap(config.labelPairs)
-
-        // Assert
-        XCTAssertEqual(pairs.count, 1)
-        XCTAssertEqual(pairs[0].key, "auth")
-        XCTAssertEqual(pairs[0].value, "basic=yes")
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL,
+                       "https://api.corp.com/v1/usage?user_id=alice%2Bops%40corp.com")
     }
 
-    // MARK: query
+    /// Regression (code review): percentEncodedQueryItems must not re-normalize the user's
+    /// pre-encoded query (signed URLs / opaque query backends rely on it)
+    func testSourceURLKeepsConfiguredQueryEncoding() {
+        // Arrange
+        let config = makeConfig(url: "https://api.corp.com/v1/usage?team=dev%2Fops")
 
-    func testQueryWithoutLabelIsMetricAlone() {
-        // Arrange / Act
-        let query = makeConfig(label: "").query
-
-        // Assert
-        XCTAssertEqual(query, "api_budget_usage")
-    }
-
-    func testQueryAppendsBracedLabels() {
-        // Arrange / Act
-        let query = makeConfig(label: "team=data,env=prod").query
-
-        // Assert
-        XCTAssertEqual(query, #"api_budget_usage{team="data",env="prod"}"#)
-    }
-
-    func testQueryEscapesBackslashAndQuoteInLabelValue() {
-        // Arrange / Act
-        let query = makeConfig(label: #"bucket=a\b"c"#).query
-
-        // Assert
-        XCTAssertEqual(query, #"api_budget_usage{bucket="a\\b\"c"}"#)
-    }
-
-    func testQueryNilWhenLabelMalformed() {
-        // Arrange / Act
-        let query = makeConfig(label: "team").query
-
-        // Assert
-        XCTAssertNil(query)
-    }
-
-    func testQueryNilWhenMetricEmpty() {
-        // Arrange / Act
-        let query = makeConfig(metric: "  ").query
-
-        // Assert
-        XCTAssertNil(query)
+        // Act / Assert
+        XCTAssertEqual(config.sourceURL,
+                       "https://api.corp.com/v1/usage?team=dev%2Fops&user_id=wyang")
     }
 
     // MARK: Codable
 
     func testCodableRoundtripPreservesAllFields() throws {
         // Arrange
-        let config = CustomMetricConfig(id: "custom-1", name: "本月预算", baseURL: "http://prom:9090",
-                                        metric: "sum(usage)", label: "team=data",
-                                        max: 5000, unit: .cny, semantics: .remaining)
+        let config = makeConfig(max: 5000, unit: .cny, semantics: .remaining)
 
         // Act
         let data = try JSONEncoder().encode(config)
@@ -139,43 +116,60 @@ final class CustomMetricConfigTests: XCTestCase {
     }
 
     func testDecodesMissingOptionalFields() throws {
-        // Arrange: label is required (defaults to empty string), max/unit optional
-        let json = #"{"id":"custom-1","name":"x","baseURL":"u","metric":"m","label":""}"#
+        // Arrange: userId/max/unit/semantics all optional
+        let json = #"{"id":"custom-1","name":"x","url":"u"}"#
 
         // Act
         let decoded = try JSONDecoder().decode(CustomMetricConfig.self, from: Data(json.utf8))
 
         // Assert
-        XCTAssertEqual(decoded.label, "")
+        XCTAssertEqual(decoded.userId, "")
         XCTAssertNil(decoded.max)
         XCTAssertNil(decoded.unit)
-        XCTAssertEqual(decoded.name, "x")
+        XCTAssertEqual(decoded.semantics, .used)
     }
 
-    /// Legacy configs (no semantics field) default to .used — the default is a product decision
-    func testDecodesLegacyConfigDefaultsToUsedSemantics() throws {
+    /// Legacy prometheus-source configs carry baseURL/metric/label keys — ignored (decoded
+    /// with an empty url, failing the fetch with "missing url"); a stale key must not
+    /// poison the whole config.json decode
+    func testDecodesLegacyPrometheusConfigTolerantly() throws {
         // Arrange
-        let json = #"{"id":"custom-1","name":"x","baseURL":"u","metric":"m","label":""}"#
+        let json = #"{"id":"custom-1","name":"x","baseURL":"http://prom:9090","metric":"m","label":"team=a"}"#
 
         // Act
         let decoded = try JSONDecoder().decode(CustomMetricConfig.self, from: Data(json.utf8))
 
         // Assert
+        XCTAssertEqual(decoded.url, "")
         XCTAssertEqual(decoded.semantics, .used)
     }
 
     func testNewConfigDefaultsToUsedSemantics() {
         // Act / Assert
-        XCTAssertEqual(CustomMetricConfig(name: "x", baseURL: "u", metric: "m").semantics, .used)
+        XCTAssertEqual(CustomMetricConfig(name: "x", url: "u").semantics, .used)
     }
 
     func testNewInstanceGetsUniqueId() {
         // Arrange / Act
-        let a = CustomMetricConfig(name: "x", baseURL: "u", metric: "m")
-        let b = CustomMetricConfig(name: "x", baseURL: "u", metric: "m")
+        let a = CustomMetricConfig(name: "x", url: "u")
+        let b = CustomMetricConfig(name: "x", url: "u")
 
         // Assert: id is a stable persistence key (selection/ball-position state depends on it) — must be unique
         XCTAssertNotEqual(a.id, b.id)
         XCTAssertFalse(a.id.isEmpty)
+    }
+
+    // MARK: makeReport (shared shape mapping)
+
+    /// label override applies to all four shapes (used by the adapter's output label)
+    func testMakeReportOverridesLabel() throws {
+        // Arrange
+        let config = makeConfig(max: 5000)
+
+        // Act
+        let report = config.makeReport(value: 100, label: "动态名称")
+
+        // Assert
+        XCTAssertEqual(report.quotas[0].label, "动态名称")
     }
 }
