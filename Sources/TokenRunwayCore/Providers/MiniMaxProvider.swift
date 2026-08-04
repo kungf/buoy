@@ -84,14 +84,23 @@ public struct MiniMaxProvider: Provider {
         return Date(timeIntervalSince1970: seconds)
     }
 
+    /// 窗口时长（秒）：start/end 各自按 ms/s 值域判定后相减，
+    /// Double 运算避免 Int64 减法在异常输入下溢出 trap（review M1）。
+    static func windowDuration(start: Int64?, end: Int64?) -> Double? {
+        guard let start, let end, start > 0, end > start else { return nil }
+        let s = start < 1_000_000_000_000 ? Double(start) : Double(start) / 1000
+        let e = end < 1_000_000_000_000 ? Double(end) : Double(end) / 1000
+        return e - s
+    }
+
     /// 间隔窗口 ID/标签按实际跨度（文本 5h、媒体日级）；非整小时记分钟。
-    static func intervalWindow(durationMs: Int64?) -> (id: String, label: String) {
-        guard let durationMs, durationMs > 0 else { return ("interval", "滚动额度") }
-        let hours = Double(durationMs) / 3_600_000
+    static func intervalWindow(durationSeconds: Double?) -> (id: String, label: String) {
+        guard let durationSeconds, durationSeconds > 0 else { return ("interval", "滚动额度") }
+        let hours = durationSeconds / 3600
         if hours >= 1, hours.rounded() == hours {
             return ("\(Int(hours))h", "\(Int(hours)) 小时额度")
         }
-        let minutes = Int((Double(durationMs) / 60_000).rounded())
+        let minutes = Int(durationSeconds / 60)
         return minutes > 0 ? ("\(minutes)m", "\(minutes) 分钟额度") : ("interval", "滚动额度")
     }
 
@@ -143,15 +152,22 @@ public struct MiniMaxProvider: Provider {
         guard let base = decoded.base_resp else {
             throw ProviderError.parse("minimax: missing base_resp")
         }
-        // 只暴露错误码，不透传服务端自由文本（DESIGN.md §10）
         guard base.status_code == 0 else {
+            // 认证类错误码映射 .unauthorized，让 UI 提示"检查密钥"而非泛化解析失败
+            // （官方错误码表：1004 未授权 / Token 不匹配，2049 无效 API Key；1002 频率超限）
+            switch base.status_code {
+            case 1004, 2049: throw ProviderError.unauthorized
+            case 1002: throw ProviderError.rateLimited
+            default: break
+            }
+            // 只暴露错误码，不透传服务端自由文本（DESIGN.md §10）
             throw ProviderError.parse("minimax: code \(base.status_code)")
         }
 
         var quotas: [Quota] = []
         for bucket in decoded.model_remains ?? [] {
             guard let modelName = bucket.model_name, !modelName.isEmpty else { continue }
-            let interval = intervalWindow(durationMs: (bucket.end_time ?? 0) - (bucket.start_time ?? 0))
+            let interval = intervalWindow(durationSeconds: windowDuration(start: bucket.start_time, end: bucket.end_time))
             if let q = buildWindowQuota(
                 modelName: modelName, windowId: interval.id, label: interval.label,
                 totalCount: bucket.current_interval_total_count,
