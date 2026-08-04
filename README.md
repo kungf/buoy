@@ -39,8 +39,6 @@ Adapter-first architecture: every provider maps onto one unified `Quota` model.
 
 **Not yet**: OpenAI · Anthropic — planned next.
 
-Full roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
-
 ## Requirements
 
 - **macOS 14.0+** (Sonoma; uses `PhaseAnimator` / `Canvas`)
@@ -127,7 +125,6 @@ Three SPM targets:
 ## Documentation
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full design doc (philosophy / architecture / provider specs / UI / milestones) — in Chinese
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — roadmap and gap checklist — in Chinese
 - [`docs/M0-ACCEPTANCE.md`](docs/M0-ACCEPTANCE.md) — M0 acceptance report — in Chinese
 - [Live site](https://kungf.github.io/token-runway/) — landing page (GitHub Pages)
 
