@@ -61,7 +61,8 @@ struct DashboardView: View {
                             isExpanded: expanded.contains(report.providerId),
                             onToggle: { toggle(report.providerId) },
                             onConfigure: { id in
-                                // 自定义指标走专用管理区（含测试查询），不走内置凭证表单
+                                // Custom metrics open the dedicated manager (incl. test query),
+                                // not the built-in credential form
                                 if store.isCustomProvider(id) {
                                     showCustomMetrics = true
                                 } else {
@@ -337,8 +338,8 @@ struct QuotaRow: View {
         if let used = quota.used {
             return "\(formatNumber(used)) / \(limit)"
         }
-        // remaining+max 形态（余额语义填总额度）：timeWindowed 但只有 remaining，
-        // 显示剩余值而非 "-- / 5000"
+        // remaining+max shape (remaining semantics with a total cap): timeWindowed but only
+        // remaining — show the remaining value instead of "-- / 5000"
         if let remaining = quota.effectiveRemaining {
             return "\(formatNumber(remaining)) / \(limit) 剩余"
         }

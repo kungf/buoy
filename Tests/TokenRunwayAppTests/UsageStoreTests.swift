@@ -161,10 +161,10 @@ final class UsageStoreTests: XCTestCase {
 
     // MARK: - Custom metrics hot reload
 
-    /// 设置面板保存/删除自定义指标后 reloadCustomMetrics 应热加载：
-    /// 新增的注册为 provider 并进入顺序列表，删除的移除（含选中态清理）。
+    /// reloadCustomMetrics hot-reloads after settings-panel save/delete:
+    /// new ones register and join the ordered list, deleted ones are removed (incl. selection cleanup).
     func test_reloadCustomMetrics_registersAndRemovesProviders() throws {
-        // Arrange：把 CredentialStore 指向临时 config.json（避免碰真实 ~/.trwy/config.json）
+        // Arrange: point CredentialStore at a temp config.json (avoid touching the real ~/.trwy/config.json)
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("trwy-reload-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -182,22 +182,22 @@ final class UsageStoreTests: XCTestCase {
                                         baseURL: "http://prom:9090", metric: "usage")
         try CustomMetricConfigStore.upsert(config, to: tempURL)
 
-        // Act：保存后热加载
+        // Act: save, then hot-reload
         store.reloadCustomMetrics()
 
-        // Assert：自定义 provider 已注册且排在内置之后
+        // Assert: the custom provider is registered after the built-ins
         XCTAssertTrue(store.knownProviderIds.contains("custom-1"))
         XCTAssertEqual(store.knownProviderIds.last, "custom-1")
 
-        // 删除后热加载：provider 被移除
+        // Deleted, then hot-reloaded: provider is gone
         try CustomMetricConfigStore.remove(id: "custom-1", from: tempURL)
         store.reloadCustomMetrics()
         XCTAssertFalse(store.knownProviderIds.contains("custom-1"))
     }
 
-    /// 编辑保存后必须替换 provider 实例（displayName 等立即生效，而非等重启）
+    /// Editing and saving must replace the provider instance (displayName etc. apply immediately, no restart)
     func test_reloadCustomMetrics_replacesEditedProviderInstance() throws {
-        // Arrange：重定向 config 到临时文件
+        // Arrange: redirect config to a temp file
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("trwy-reload-edit-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -211,22 +211,22 @@ final class UsageStoreTests: XCTestCase {
         store.start()
         defer { store.stop() }
 
-        // 保存（旧名）→ 热加载
+        // Save (old name) → hot-reload
         try CustomMetricConfigStore.upsert(
             CustomMetricConfig(id: "custom-1", name: "旧名", baseURL: "u", metric: "m"), to: tempURL)
         store.reloadCustomMetrics()
         XCTAssertEqual(store.providerDisplayName(for: "custom-1"), "旧名")
 
-        // 编辑（新名）→ 热加载：displayName 立即更新
+        // Edit (new name) → hot-reload: displayName updates immediately
         try CustomMetricConfigStore.upsert(
             CustomMetricConfig(id: "custom-1", name: "新名", baseURL: "u", metric: "m"), to: tempURL)
         store.reloadCustomMetrics()
         XCTAssertEqual(store.providerDisplayName(for: "custom-1"), "新名")
     }
 
-    /// 删除自定义指标后缓存必须同步落盘，否则重启后幽灵报告从 cache.json 复活
+    /// Deleting a custom metric must persist the cache, or ghost reports resurrect from cache.json on restart
     func test_reloadCustomMetrics_deletedProviderNotResurrectedFromCache() throws {
-        // Arrange：重定向 config + cache 到临时文件
+        // Arrange: redirect config + cache to temp files
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("trwy-reload-cache-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -246,26 +246,26 @@ final class UsageStoreTests: XCTestCase {
         store.start()
         defer { store.stop() }
 
-        // 已有报告（模拟拉取成功）
+        // A report already exists (simulating a successful fetch)
         try CustomMetricConfigStore.upsert(
             CustomMetricConfig(id: "custom-1", name: "预算", baseURL: "u", metric: "m"), to: configURL)
         store.reloadCustomMetrics()
         installReport(store, id: "custom-1")
-        store.refreshIfStale()   // no-op（mock providers 下 pollTasks 非空？——不依赖，直接断言缓存）
+        store.refreshIfStale()   // no-op; we don't depend on it — assert the cache directly
 
-        // Act：删除 → 热加载
+        // Act: delete → hot-reload
         try CustomMetricConfigStore.remove(id: "custom-1", from: configURL)
         store.reloadCustomMetrics()
 
-        // Assert：缓存已落盘且不含被删 provider（重启后不会复活）
+        // Assert: cache persisted and free of the deleted provider (no resurrection on restart)
         let cache = CacheStore.load(from: cacheURL)
         XCTAssertFalse(cache?.reports.contains { $0.providerId == "custom-1" } ?? true)
         XCTAssertTrue(store.reports.allSatisfy { $0.providerId != "custom-1" })
     }
 
-    // MARK: - used 语义球体形态
+    // MARK: - used-semantics ball shapes
 
-    /// used + max：水位 = 已用比例（满 = 耗尽），中心 = 用量数值，sub = 已用百分比
+    /// used + max: water = used proportion (full = drained), center = usage value, sub = used percent
     func test_ballModel_usedSemanticsWithMax() {
         // Arrange
         let store = makeStore(ids: ["provider_a"])
@@ -278,13 +278,13 @@ final class UsageStoreTests: XCTestCase {
         // Act
         let model = store.ballModel(for: "provider_a")
 
-        // Assert：水位 = 80%（已用方向），中心 = 数值 80，sub = 80%
+        // Assert: water = 80% (used direction), center = value 80, sub = 80%
         XCTAssertEqual(model.coreLevel ?? -1, 0.8, accuracy: 1e-9)
         XCTAssertEqual(model.centerText, "80")
         XCTAssertEqual(model.subText, "80%")
     }
 
-    /// used 无 max：无水位（coreLevel nil），中心 = 用量数值，sub = 单位缩写
+    /// used without max: no water (coreLevel nil), center = usage value, sub = unit abbreviation
     func test_ballModel_usedSemanticsWithoutMax() {
         // Arrange
         let store = makeStore(ids: ["provider_a"])
@@ -297,15 +297,15 @@ final class UsageStoreTests: XCTestCase {
         // Act
         let model = store.ballModel(for: "provider_a")
 
-        // Assert：无水位，中心 = 880.2（一位小数），sub = ¥
+        // Assert: no water, center = 880.2 (one decimal), sub = ¥
         XCTAssertNil(model.coreLevel)
         XCTAssertEqual(model.centerText, "880.2")
         XCTAssertEqual(model.subText, "¥")
     }
 
-    /// remaining + max：水位 = 剩余比例（remaining/max，满 = 健康），中心 = 剩余百分比
+    /// remaining + max: water = remaining/max (full = healthy), center = remaining percent
     func test_ballModel_remainingWithMaxShowsRemainingLevel() {
-        // Arrange：remaining=4321, limit=10000 → 剩余 43.21%
+        // Arrange: remaining=4321, limit=10000 → 43.21% left
         let store = makeStore(ids: ["provider_a"])
         let report = ProviderReport(providerId: "provider_a", fetchedAt: Date(), quotas: [
             Quota(id: "provider_a.main", type: .timeWindowed, label: "预算",
@@ -316,12 +316,12 @@ final class UsageStoreTests: XCTestCase {
         // Act
         let model = store.ballModel(for: "provider_a")
 
-        // Assert：水位 = 剩余 43.2%，中心 = 43%
+        // Assert: water = 43.2% remaining, center = 43%
         XCTAssertEqual(model.coreLevel ?? -1, 4321.0 / 10000, accuracy: 1e-9)
         XCTAssertEqual(model.centerText, "43%")
     }
 
-    /// 默认语义（showsUsedLevel=false）保持原有行为：水位 = 剩余比例，中心 = 剩余百分比
+    /// Default semantics (showsUsedLevel=false) keeps original behavior: water = remaining, center = remaining percent
     func test_ballModel_remainingSemanticsKeepsOriginalBehavior() {
         // Arrange
         let store = makeStore(ids: ["provider_a"])
@@ -334,14 +334,14 @@ final class UsageStoreTests: XCTestCase {
         // Act
         let model = store.ballModel(for: "provider_a")
 
-        // Assert：水位 = 剩余 20%，中心 = 20%
+        // Assert: water = 20% remaining, center = 20%
         XCTAssertEqual(model.coreLevel ?? -1, 0.2, accuracy: 1e-9)
         XCTAssertEqual(model.centerText, "20%")
     }
 
-    /// 启动时 loadCache 必须过滤掉已不存在的 provider（手工删除配置后的残留缓存）
+    /// loadCache at startup must filter providers that no longer exist (stale cache after manual config removal)
     func test_loadCache_filtersGhostProviders() throws {
-        // Arrange：临时 cache.json 含幽灵 provider + 正常 provider
+        // Arrange: temp cache.json holds a ghost provider + a normal provider
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("trwy-ghost-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -354,12 +354,12 @@ final class UsageStoreTests: XCTestCase {
         let ghost = ProviderReport(providerId: "custom-ghost", fetchedAt: Date(), quotas: [])
         CacheStore.save(TokenRunwayCache(reports: [ghost], forecast: ForecastEngine()), to: cacheURL)
 
-        // Act：启动（providers 只含 provider_a，无 custom-ghost）
+        // Act: start (providers contains only provider_a, no custom-ghost)
         let store = makeStore(ids: ["provider_a"])
         store.start()
         defer { store.stop() }
 
-        // Assert：幽灵报告被过滤
+        // Assert: the ghost report is filtered out
         XCTAssertFalse(store.reports.contains { $0.providerId == "custom-ghost" })
     }
 }

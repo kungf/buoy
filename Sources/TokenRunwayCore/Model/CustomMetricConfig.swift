@@ -1,40 +1,44 @@
 import Foundation
 
-/// 自定义指标语义：指标值代表什么（决定球体形态）
+/// Metric semantics: what the metric value represents (drives the ball shape)
 public enum MetricSemantics: String, Codable, Sendable {
-    /// 已使用（默认）：值 = 用量。配 max → 水位 = used/max（满 = 耗尽）；
-    /// 不配 max → 球只显示数值，无水位
+    /// Used (default): value = consumed. With max → water = used/max (full = drained);
+    /// without max → ball shows the value only, no water level
     case used
-    /// 余额：值 = 剩余量。余额球（水位 = 值/历史高水位），max 不适用
+    /// Remaining: value = amount left. With max → water = remaining/max (full = healthy);
+    /// without max → balance ball (water = value / historical high-water mark)
     case remaining
 }
 
-/// 用户自定义指标配置（自定义指标 Provider）。
-/// 一个配置 = 一个 provider 实例 = 一个球。存于 ~/.trwy/config.json 的 `customMetrics` 字段
-/// （与 trwyctl 共享，非 UserDefaults——CLI 与 App 分属不同进程域）。
-/// 非机密字段全在此；访问令牌走 providers[<id>].token 的现有 bearer 通道。
+/// User-defined metric config (custom metrics provider).
+/// One config = one provider instance = one ball. Stored in the `customMetrics` field of
+/// ~/.trwy/config.json (shared with trwyctl, not UserDefaults — CLI and App are different
+/// process domains). Non-secret fields only; the access token goes through the existing
+/// providers[<id>].token bearer channel.
 public struct CustomMetricConfig: Codable, Sendable, Equatable, Identifiable {
-    /// 稳定 id（首次创建生成 UUID），选择/球位置/缓存状态的持久化键，不可变
+    /// Stable id (UUID at creation), the persistence key for selection / ball-position / cache state; immutable
     public let id: String
-    /// 显示名（球面铭牌 / quota label）
+    /// Display name (ball badge / quota label)
     public var name: String
-    /// Prometheus 根地址，如 http://prom.internal:9090（适配器拼 /api/v1/query）
+    /// Prometheus root URL, e.g. http://prom.internal:9090 (adapter appends /api/v1/query)
     public var baseURL: String
-    /// 指标名或完整 PromQL 表达式（如 api_budget_usage / sum(api_budget_usage)）。
-    /// 写了聚合表达式时 label 留空（label 无法安全地追加到聚合结果上）。
+    /// Metric name or full PromQL expression (e.g. api_budget_usage / sum(api_budget_usage)).
+    /// Leave label empty when using an aggregation expression (labels can't be safely
+    /// appended to an aggregation result).
     public var metric: String
-    /// 标签过滤 "xx=xx"，多个逗号分隔（team=data,env=prod）；空 = 不过滤。
-    /// 值内不允许逗号与引号（转义只处理反斜杠与引号）。
+    /// Label filter "xx=xx", comma-separated (team=data,env=prod); empty = no filter.
+    /// Values must not contain commas or quotes (only backslash and quote are escaped).
     public var label: String
-    /// 固定上限（用户手填，如月度预算 5000）。仅 used 语义有效：used + max → 已用水位；
-    /// used 无 max → 纯值无水位；remaining 语义忽略此字段
+    /// Fixed cap (user-entered, e.g. monthly budget 5000). used + max → used water;
+    /// used without max → plain value, no water; remaining + max → remaining water
     public var max: Double?
-    /// 单位（人民币/美元/自定义文本）。nil = 无单位
+    /// Unit (CNY/USD/custom text). nil = no unit
     public var unit: Unit?
-    /// 指标语义：已使用（默认）/ 余额
+    /// Metric semantics: used (default) / remaining
     public var semantics: MetricSemantics
 
-    /// id 固定 "custom-" 前缀：UsageStore 热加载/移除、Dashboard 入口路由靠它识别自定义 provider
+    /// id carries a fixed "custom-" prefix so UsageStore hot-reload/removal and
+    /// Dashboard routing can identify custom providers
     public init(id: String = "custom-\(UUID().uuidString)", name: String, baseURL: String,
                 metric: String, label: String = "", max: Double? = nil, unit: Unit? = nil,
                 semantics: MetricSemantics = .used) {
@@ -48,7 +52,7 @@ public struct CustomMetricConfig: Codable, Sendable, Equatable, Identifiable {
         self.semantics = semantics
     }
 
-    /// 旧配置（无 semantics 字段）默认 .used
+    /// Legacy configs (no semantics field) default to .used
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -61,9 +65,10 @@ public struct CustomMetricConfig: Codable, Sendable, Equatable, Identifiable {
         semantics = try container.decodeIfPresent(MetricSemantics.self, forKey: .semantics) ?? .used
     }
 
-    /// 解析 "team=data,env=prod" → [("team","data"),("env","prod")]。
-    /// 空 label → []；任一键/值为空、缺少 `=`、或出现空段（首尾/连续逗号，如 "a=b,"）→ nil
-    /// （fetch 层报错，不静默丢标签）。
+    /// Parse "team=data,env=prod" → [("team","data"),("env","prod")].
+    /// Empty label → []; nil when any key/value is empty, `=` is missing, or an empty segment
+    /// appears (leading/trailing/double commas, e.g. "a=b,") — the fetch layer reports the
+    /// error instead of silently dropping labels.
     public var labelPairs: [(key: String, value: String)]? {
         let trimmed = label.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return [] }
@@ -79,8 +84,8 @@ public struct CustomMetricConfig: Codable, Sendable, Equatable, Identifiable {
         return pairs
     }
 
-    /// PromQL 查询串：metric 或 metric{key="value",...}。label 值转义 `\` 与 `"`。
-    /// 返回 nil = label 格式非法或 metric 为空。
+    /// PromQL query string: metric or metric{key="value",...}. Label values escape `\` and `"`.
+    /// nil = malformed label or empty metric.
     public var query: String? {
         let trimmed = metric.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }

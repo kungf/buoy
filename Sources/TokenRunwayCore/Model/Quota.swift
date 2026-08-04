@@ -10,20 +10,20 @@ public enum QuotaType: String, Codable, Sendable {
     case rateLimit
 }
 
-/// 计量单位。不同 unit 之间禁止跨 provider 聚合求和（DESIGN.md §3.2）
+/// Measurement unit. Units must not be summed across providers (DESIGN.md §3.2)
 public enum Unit: Codable, Sendable, Equatable {
     case tokens
     /// 火山 AFP 点数
     case credits
     case usd
     case cny
-    /// 无单位（自定义指标未配 unit 时显示纯数字）
+    /// No unit (custom metrics without a configured unit show a bare number)
     case none
-    /// 任意自定义单位文本（如 "GBP"、"小时"）。编码为 {"custom":"GBP"}，
-    /// 与固定 case 的纯字符串格式区分。
+    /// Arbitrary custom unit text (e.g. "GBP"). Encoded as {"custom":"GBP"},
+    /// distinct from the plain-string format of the fixed cases.
     case custom(String)
 
-    /// 固定 case 的序列化名（旧缓存即此格式）
+    /// Serialized name of the fixed cases (the legacy cache format)
     private var fixedName: String? {
         switch self {
         case .tokens: return "tokens"
@@ -48,7 +48,7 @@ public enum Unit: Codable, Sendable, Equatable {
     }
 
     public init(from decoder: Decoder) throws {
-        // 旧缓存/固定 case：纯字符串（"tokens" 等）
+        // Legacy/fixed cases: plain strings ("tokens" etc.)
         if let container = try? decoder.singleValueContainer(),
            let raw = try? container.decode(String.self) {
             switch raw {
@@ -61,7 +61,7 @@ public enum Unit: Codable, Sendable, Equatable {
             }
             return
         }
-        // 新格式：.custom(文本) → {"custom":"GBP"}
+        // New format: .custom(text) → {"custom":"GBP"}
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if container.contains(.custom) {
             self = .custom(try container.decode(String.self, forKey: .custom))
@@ -96,8 +96,9 @@ public struct Quota: Identifiable, Codable, Sendable, Equatable {
     public let windowStart: Date?
     /// 窗口结束 / reset 时刻
     public let resetsAt: Date?
-    /// 水位方向（仅 timeWindowed 有意义）：true = 已用比例（used/limit，满 = 耗尽，
-    /// 自定义指标 used 语义）；false = 剩余比例（默认，满 = 健康，内置 provider）。
+    /// Water-level direction (only meaningful for timeWindowed): true = used proportion
+    /// (used/limit, full = drained, custom-metric used semantics); false = remaining
+    /// proportion (default, full = healthy, built-in providers).
     public let showsUsedLevel: Bool
 
     public init(
@@ -124,9 +125,10 @@ public struct Quota: Identifiable, Codable, Sendable, Equatable {
         self.showsUsedLevel = showsUsedLevel
     }
 
-    /// 自定义解码：showsUsedLevel 是带默认值的 let，合成解码器会静默忽略它
-    /// （"immutable property will not be decoded"）——used 语义的配额经 cache.json
-    /// 往返后水位方向会丢失，重启即回退成剩余语义。旧缓存无此字段 → false。
+    /// Custom decode: showsUsedLevel is a defaulted `let`, which the synthesized decoder
+    /// silently drops ("immutable property will not be decoded") — used-semantics quotas
+    /// would lose the water direction across the cache.json round-trip and revert on
+    /// restart. Legacy caches without the field decode to false.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)

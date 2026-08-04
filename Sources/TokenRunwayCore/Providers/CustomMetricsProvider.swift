@@ -1,10 +1,10 @@
 import Foundation
 
-/// 自定义指标 Provider：Prometheus instant query 适配器。
-/// 一个 CustomMetricConfig 实例对应一个 provider（id = config.id）：
-/// GET {baseURL}/api/v1/query?query={metric}{labels}，取 result[0].value 的数值。
-/// 配了 max（>0）→ timeWindowed（used=usage, limit=max，显示已用百分比/剩余/呼吸）；
-/// 未配 max → balance（remaining=usage，DeepSeek 式余额球）。
+/// Custom metrics provider: Prometheus instant-query adapter.
+/// One CustomMetricConfig instance maps to one provider (id = config.id):
+/// GET {baseURL}/api/v1/query?query={metric}{labels}, takes result[0].value.
+/// Semantics × max (see MetricSemantics): used+max → used water; used no-max → plain value;
+/// remaining+max → remaining water; remaining no-max → balance ball.
 public struct CustomMetricsProvider: Provider {
     public let manifest: ProviderManifest
     public let config: CustomMetricConfig
@@ -52,7 +52,7 @@ public struct CustomMetricsProvider: Provider {
         case .bearer(let token):
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         case .none:
-            break   // 内网公开端点，裸请求
+            break   // open internal endpoint — bare request
         default:
             throw ProviderError.missingCredential
         }
@@ -64,7 +64,7 @@ public struct CustomMetricsProvider: Provider {
 
     // MARK: - Parsing
 
-    /// Prometheus instant query 响应（官方格式）：value = [时间戳, 数值字符串]
+    /// Prometheus instant-query response (official format): value = [timestamp, numeric string]
     struct PrometheusResponse: Decodable {
         let status: String
         let data: DataDTO?
@@ -94,30 +94,30 @@ public struct CustomMetricsProvider: Provider {
         } catch {
             throw ProviderError.parse("custom: \(error.localizedDescription)")
         }
-        // status=error 只暴露错误状态，不透传服务端自由文本（DESIGN.md §10）
+        // status=error exposes only the error state, never server free text (DESIGN.md §10)
         guard decoded.status == "success" else {
             throw ProviderError.parse("custom: prometheus status=error")
         }
-        // 查询无数据 = 指标名/标签写错，报错而非静默空报告
+        // No data = wrong metric/label; fail loudly instead of a silent empty report
         guard let sample = decoded.data?.result?.first?.value else {
             throw ProviderError.parse("custom: no data for query")
         }
-        // Double("NaN")/Double("Inf") 会解析成功，但会污染百分比/剩余计算，必须拒绝
+        // Double("NaN")/Double("Inf") parse successfully but would poison percent/remaining math — reject
         guard let used = Double(sample.value), used.isFinite else {
             throw ProviderError.parse("custom: non-numeric value")
         }
 
-        // 余额语义：指标值 = 剩余量。
+        // Remaining semantics: the value = amount left.
         if config.semantics == .remaining {
             if let max = config.max, max > 0 {
-                // 余额 + 上限：水位 = 剩余比例（remaining/max，满 = 健康，与内置 provider 一致）
+                // remaining + max: water = remaining/max (full = healthy, same as built-in providers)
                 let quota = Quota(id: "\(config.id).main", type: .timeWindowed,
                                   label: config.name, unit: config.unit ?? .none,
                                   limit: max, remaining: used)
                 return ProviderReport(providerId: config.id, fetchedAt: now, quotas: [quota])
             }
-            // 余额无上限：余额球。必须带 BalanceInfo：ballModel 据此路由到余额球
-            // （否则走 windowed 分支显示 "--"）。currency 由 unit 映射出 ¥/$ 角标。
+            // remaining without max: balance ball. BalanceInfo is required so ballModel routes to the
+            // balance shape (otherwise the windowed branch renders "--"). currency maps ¥/$ badge.
             let quota = Quota(id: "\(config.id).main", type: .balance,
                               label: config.name, unit: config.unit ?? .none,
                               remaining: used)
@@ -132,7 +132,7 @@ public struct CustomMetricsProvider: Provider {
                                                        granted: 0, toppedUp: 0))
         }
 
-        // 已使用语义（默认）：值 = 用量。配 max → 已用水位（满 = 耗尽）；不配 → 纯值无水位
+        // Used semantics (default): the value = consumed. With max → used water (full = drained); without → plain value
         let quota: Quota
         if let max = config.max, max > 0 {
             quota = Quota(id: "\(config.id).main", type: .timeWindowed,

@@ -6,7 +6,7 @@ final class CredentialStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        // 专用子目录：save 会 chmod 目录 0700，不能直接改共享的系统临时目录 T
+        // Dedicated subdir: save chmods the dir to 0700 and must not touch the shared system temp dir T
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("trwy-test-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -100,25 +100,26 @@ final class CredentialStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.providers["deepseek"]?.token, "new-token")
     }
 
-    /// 文件 0600 / 目录 0700 是 token 文件唯一的本机保护，必须锁定：
-    /// 目录已存在时（旧版本/手动创建）createDirectory 不会应用权限，save 必须强制。
+    /// File 0600 / dir 0700 are the only local protection for the token file — locked in:
+    /// a pre-existing dir (old version / manual) won't pick up createDirectory permissions,
+    /// so save must force them.
     func testSaveEnforcesFileAndDirectoryPermissions() throws {
-        // Arrange：先手动创建宽松权限的目录（模拟旧版本遗留），文件不存在
+        // Arrange: create a loose-permission dir first (simulating an old-version leftover); no file yet
         let dir = tempURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
         XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int,
                        0o755 & 0o777)
 
-        // Act：保存含 token 的配置
+        // Act: save a config containing a token
         var config = TokenRunwayConfigFile(providers: [:])
         config.providers["deepseek"] = ProviderCredentials(auth: "bearer", token: "sk-test")
         try CredentialStore.save(config, to: tempURL)
 
-        // Assert：目录被强制收紧为 0700，文件为 0600
+        // Assert: the dir is tightened to 0700 and the file to 0600
         let dirPerms = try FileManager.default.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int
-        XCTAssertEqual(dirPerms ?? 0, 0o700, "config 目录必须 0700")
+        XCTAssertEqual(dirPerms ?? 0, 0o700, "config dir must be 0700")
         let filePerms = try FileManager.default.attributesOfItem(atPath: tempURL.path)[.posixPermissions] as? Int
-        XCTAssertEqual(filePerms ?? 0, 0o600, "config 文件必须 0600")
+        XCTAssertEqual(filePerms ?? 0, 0o600, "config file must be 0600")
     }
 }

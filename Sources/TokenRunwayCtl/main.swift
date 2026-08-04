@@ -52,8 +52,9 @@ func credential(for provider: any Provider, config: TokenRunwayConfigFile?) -> C
     }
     if let env = envCredential(for: provider) { return env }
     if let stored = CredentialStore.credential(for: provider.manifest.id, from: config) { return stored }
-    // 自定义指标：无凭证也可拉取（内网公开端点）。
-    // 注意必须写 Credential.none——返回类型是 Credential?，裸 .none 会解析成 Optional.none（nil）
+    // Custom metrics fetch without credentials (open internal endpoints).
+    // Must be Credential.none — the return type is Credential?, and a bare `.none`
+    // resolves to Optional.none (nil)
     if provider.manifest.allowsNoCredential { return Credential.none }
     return nil
 }
@@ -79,12 +80,12 @@ let config = CredentialStore.load()
 
 let targets: [any Provider]
 if arg == "all" {
-    // 内置 + 用户自定义指标（~/.trwy/config.json 的 customMetrics）
+    // Built-ins + user custom metrics (~/.trwy/config.json customMetrics)
     targets = ProviderRegistry.all(includingCustom: config?.customMetrics ?? [])
 } else if let provider = ProviderRegistry.provider(for: arg) {
     targets = [provider]
 } else if let custom = config?.customMetrics.first(where: { $0.id == arg }) {
-    // 单个自定义指标：trwyctl <custom-id>
+    // Single custom metric: trwyctl <custom-id>
     targets = [CustomMetricsProvider(config: custom)]
 } else {
     let customIds = (config?.customMetrics ?? []).map(\.id)

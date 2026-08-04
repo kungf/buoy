@@ -1,12 +1,12 @@
 import XCTest
 @testable import TokenRunwayCore
 
-/// CustomMetricsProvider：Prometheus instant query 适配器。
-/// parse 走静态方法（与 DeepSeek/Volcano 一致，可无 HTTP 测解析）；
-/// fetch 用可编程 StubHTTPClient 断言请求形状（与 KimiCLICredentialStoreTests 同模式）。
+/// CustomMetricsProvider: Prometheus instant-query adapter.
+/// parse goes through the static method (like DeepSeek/Volcano — testable without HTTP);
+/// fetch uses a programmable StubHTTPClient to assert request shape (same pattern as KimiCLICredentialStoreTests).
 final class CustomMetricsProviderTests: XCTestCase {
 
-    /// 可编程 HTTPClient：记录请求并返回预设响应
+    /// Programmable HTTPClient: records requests, returns preset responses
     actor StubHTTPClient: HTTPClient {
         private var responses: [HTTPResponse]
         private(set) var requests: [URLRequest] = []
@@ -20,7 +20,7 @@ final class CustomMetricsProviderTests: XCTestCase {
         }
     }
 
-    // Foundation 也有 Unit（NSUnit），测试 target 里用模块限定消除歧义
+    // Foundation also has Unit (NSUnit) — qualify with the module in the test target
     private typealias QuotaUnit = TokenRunwayCore.Unit
 
     private func makeConfig(max: Double? = nil, unit: QuotaUnit? = nil,
@@ -31,7 +31,7 @@ final class CustomMetricsProviderTests: XCTestCase {
                            max: max, unit: unit, semantics: semantics)
     }
 
-    /// Prometheus 官方 instant query 响应样例：value = [时间戳, 数值字符串]
+    /// Official Prometheus instant-query sample: value = [timestamp, numeric string]
     private func promResponse(value: String = "1234.5", count: Int = 1) -> Data {
         let series = (0..<count).map { i in
             #"{"metric":{"team":"data"},"value":[1778806800.0,"\#(value)"]}"# +
@@ -42,9 +42,9 @@ final class CustomMetricsProviderTests: XCTestCase {
         """.utf8)
     }
 
-    // MARK: parse — used 语义（默认）
+    // MARK: parse — used semantics (default)
 
-    /// used + max → 已用水位（满 = 耗尽）
+    /// used + max → used water (full = drained)
     func testParsesUsedWithMaxAsTimeWindowed() throws {
         // Arrange
         let json = promResponse(value: "1234.5")
@@ -63,11 +63,11 @@ final class CustomMetricsProviderTests: XCTestCase {
         XCTAssertEqual(q.limit, 5000)
         XCTAssertEqual(q.effectiveRemaining, 3765.5)
         XCTAssertEqual(try XCTUnwrap(q.percentUsed), 1234.5 / 5000, accuracy: 1e-9)
-        XCTAssertTrue(q.showsUsedLevel, "used 语义水位必须为已用方向")
+        XCTAssertTrue(q.showsUsedLevel, "used semantics water must be used-direction")
         XCTAssertNil(report.balance)
     }
 
-    /// used 无 max：纯值无水位（limit nil → percentUsed nil），不带 BalanceInfo
+    /// used without max: plain value, no water (limit nil → percentUsed nil), no BalanceInfo
     func testParsesUsedWithoutMaxAsPlainValue() throws {
         // Arrange
         let json = promResponse(value: "880.25")
@@ -86,16 +86,16 @@ final class CustomMetricsProviderTests: XCTestCase {
     }
 
     func testParsesUsedMaxZeroAsPlainValue() throws {
-        // Arrange：max <= 0 = 无上限（避免 limit=0 除零/误导）
+        // Arrange: max <= 0 = no cap (avoids limit=0 division/misleading)
         let report = try CustomMetricsProvider.parse(
             data: promResponse(), config: makeConfig(max: 0))
         XCTAssertEqual(report.quotas[0].type, .timeWindowed)
         XCTAssertNil(report.quotas[0].limit)
     }
 
-    // MARK: parse — remaining 语义
+    // MARK: parse — remaining semantics
 
-    /// remaining：指标值 = 剩余量，余额球（水位 = 值/历史高水位）
+    /// remaining: value = amount left, balance ball (water = value / high-water mark)
     func testParsesRemainingAsBalance() throws {
         // Arrange
         let json = promResponse(value: "880.25")
@@ -110,31 +110,31 @@ final class CustomMetricsProviderTests: XCTestCase {
         XCTAssertEqual(q.remaining, 880.25)
         XCTAssertNil(q.limit)
         XCTAssertNil(q.used)
-        // 余额分支必须带 BalanceInfo：ballModel 据此路由到余额球（否则显示 "--"）
+        // Balance branch must attach BalanceInfo: ballModel routes to the balance shape (else "--")
         XCTAssertNotNil(report.balance)
         XCTAssertEqual(report.balance?.total, 880.25)
     }
 
-    /// remaining + max：水位 = 剩余比例（remaining/max，满 = 健康，与内置 provider 一致）
+    /// remaining + max: water = remaining/max (full = healthy, same as built-ins)
     func testParsesRemainingWithMaxAsRemainingLevel() throws {
-        // Arrange：指标值 4321 = 剩余量，总额度 10000
+        // Arrange: value 4321 = remaining, total cap 10000
         let json = promResponse(value: "4321.0")
 
         // Act
         let report = try CustomMetricsProvider.parse(
             data: json, config: makeConfig(max: 10000, semantics: .remaining))
 
-        // Assert：remaining 型 timeWindowed，已用 56.79%、剩余 43.21%
+        // Assert: remaining-style timeWindowed, 56.79% used / 43.21% remaining
         let q = report.quotas[0]
         XCTAssertEqual(q.type, .timeWindowed)
         XCTAssertEqual(q.remaining, 4321)
         XCTAssertEqual(q.limit, 10000)
-        XCTAssertFalse(q.showsUsedLevel, "remaining 语义水位必须为剩余方向")
+        XCTAssertFalse(q.showsUsedLevel, "remaining semantics water must be remaining-direction")
         XCTAssertEqual(try XCTUnwrap(q.percentUsed), 5679.0 / 10000, accuracy: 1e-9)
-        XCTAssertNil(report.balance, "有上限的 remaining 不应附加 BalanceInfo")
+        XCTAssertNil(report.balance, "remaining with cap must not attach BalanceInfo")
     }
 
-    /// 余额分支的 currency 由 unit 映射（CNY → 余额球显示 ¥ 角标）；无单位 → 空
+    /// Balance-branch currency maps from unit (CNY → ¥ badge); unitless → empty
     func testParsesBalanceCurrencyFromUnit() throws {
         // Arrange
         let json = promResponse()
@@ -150,10 +150,10 @@ final class CustomMetricsProviderTests: XCTestCase {
         XCTAssertEqual(none.balance?.currency, "")
     }
 
-    // MARK: parse — 公共行为
+    // MARK: parse — common behavior
 
     func testParsesMapsConfiguredUnit() throws {
-        // Arrange：配了 CNY → 映射 .cny；没配 → .none
+        // Arrange: CNY configured → .cny; not configured → .none
         let withUnit = try CustomMetricsProvider.parse(
             data: promResponse(), config: makeConfig(max: 5000, unit: .cny))
         XCTAssertEqual(withUnit.quotas[0].unit, .cny)
@@ -164,7 +164,7 @@ final class CustomMetricsProviderTests: XCTestCase {
     }
 
     func testThrowsOnStatusErrorWithoutFreeText() {
-        // Arrange：Prometheus 业务错误，status=error（服务端自由文本不得泄露）
+        // Arrange: Prometheus business error, status=error (server free text must not leak)
         let json = Data("""
         {"status":"error","errorType":"bad_data","error":"internal detail must not leak"}
         """.utf8)
@@ -180,7 +180,7 @@ final class CustomMetricsProviderTests: XCTestCase {
     }
 
     func testThrowsOnEmptyResult() {
-        // Arrange：查询无数据 = 配置问题（指标名/标签写错），报错而非静默空报告
+        // Arrange: no data = config problem (wrong metric/label); fail loudly, not a silent empty report
         let json = Data(#"{"status":"success","data":{"resultType":"vector","result":[]}}"#.utf8)
 
         // Act / Assert
@@ -192,7 +192,7 @@ final class CustomMetricsProviderTests: XCTestCase {
         }
     }
 
-    /// 多序列（未聚合时）取第一条 —— 需要聚合就在 metric 里写 sum(...)
+    /// Multi-series (unaggregated) takes the first — use sum(...) in the metric field to aggregate
     func testTakesFirstSeriesWhenMultiple() throws {
         // Arrange
         let json = Data("""
@@ -235,10 +235,10 @@ final class CustomMetricsProviderTests: XCTestCase {
         }
     }
 
-    // MARK: fetch（请求形状）
+    // MARK: fetch (request shape)
 
     func testFetchBuildsQueryURL() async throws {
-        // Arrange：metric + label → PromQL，URL 编码
+        // Arrange: metric + label → PromQL, URL-encoded
         let http = StubHTTPClient(responses: [HTTPResponse(status: 200, data: promResponse())])
         let provider = CustomMetricsProvider(config: makeConfig(max: 5000, label: "team=data,env=prod"),
                                              http: http)
@@ -271,7 +271,7 @@ final class CustomMetricsProviderTests: XCTestCase {
     }
 
     func testFetchMapsHTTPErrors() async throws {
-        // Arrange：401 → unauthorized；429 → rateLimited
+        // Arrange: 401 → unauthorized; 429 → rateLimited
         for (status, expected) in [(401, ProviderError.unauthorized), (429, ProviderError.rateLimited)] {
             let http = StubHTTPClient(responses: [HTTPResponse(status: status, data: Data())])
             let provider = CustomMetricsProvider(config: makeConfig(), http: http)
@@ -285,7 +285,7 @@ final class CustomMetricsProviderTests: XCTestCase {
     }
 
     func testFetchThrowsOnMalformedLabel() async {
-        // Arrange：label 非法（缺 =）→ fetch 层直接报错，不发请求
+        // Arrange: malformed label (missing =) → fetch errors without sending a request
         let http = StubHTTPClient()
         let provider = CustomMetricsProvider(config: makeConfig(label: "team"), http: http)
 
@@ -302,7 +302,8 @@ final class CustomMetricsProviderTests: XCTestCase {
         XCTAssertEqual(count, 0, "must not send a request for a malformed query")
     }
 
-    /// manifest 契约：自定义 provider 允许无凭证（内网公开端点），displayName = 用户配置的 name
+    /// Manifest contract: custom providers allow no credential (open internal endpoints),
+    /// displayName = the user-configured name
     func testManifestReflectsConfig() {
         // Arrange
         let provider = CustomMetricsProvider(config: makeConfig(max: 5000))

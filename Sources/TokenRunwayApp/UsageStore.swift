@@ -22,7 +22,7 @@ final class UsageStore: ObservableObject {
     /// Polling paused (toggled from the right-click menu)
     @Published var pollingPaused: Bool = false
 
-    /// var：自定义指标保存后可热加载（reloadCustomMetrics）
+    /// var: custom metrics can hot-reload after save (reloadCustomMetrics)
     private var providers: [String: any Provider]
     /// Provider init order (gives a stable order for "the first ball" and cluster arrangement)
     private var providerOrder: [String]
@@ -36,7 +36,7 @@ final class UsageStore: ObservableObject {
 
     init(providers: [any Provider]? = nil,
          preferences: SelectionStorage = Preferences()) {
-        // 未显式注入时：内置 provider + 用户自定义指标（~/.trwy/config.json 的 customMetrics）
+        // When not explicitly injected: built-ins + user custom metrics (~/.trwy/config.json customMetrics)
         let resolved = providers ?? ProviderRegistry.all(includingCustom: CustomMetricConfigStore.load())
         self.providerOrder = resolved.map { $0.manifest.id }
         self.providers = Dictionary(resolved.map { ($0.manifest.id, $0) },
@@ -60,8 +60,8 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// 启动单个 provider 的轮询任务。start 时错峰 5s（避免同步网络突发，DESIGN.md §6）；
-    /// 自定义指标保存后热加载时即时启动（stagger=1）。
+    /// Start one provider's polling task. start() staggers 5s apart to avoid a synchronized
+    /// network burst (DESIGN.md §6); hot-reloaded custom metrics start immediately (stagger=1).
     private func startPolling(id: String, stagger: TimeInterval) {
         guard let provider = providers[id] else { return }
         let base = provider.manifest.defaultPollInterval
@@ -77,13 +77,15 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// 自定义指标配置变更后热加载（设置面板保存/删除后调用）：
-    /// 新增的立即注册并开始轮询；编辑的替换实例（轮询循环每轮重读 providers[id]，无需重启任务）；
-    /// 删除的取消轮询、清理报告/错误/选中态并落盘缓存（否则删除的指标会在重启后从 cache.json 复活）。
+    /// Hot-reload after custom-metric config changes (settings panel save/delete):
+    /// new ones register and start polling; edits replace the instance (the poll loop re-reads
+    /// providers[id] every round, no task restart); deletions cancel polling, clean up
+    /// reports/errors/selection and persist the cache (otherwise the deleted metric
+    /// resurrects from cache.json on restart).
     func reloadCustomMetrics() {
         let configs = CustomMetricConfigStore.load()
         let activeIds = Set(configs.map(\.id))
-        // 删除已移除的
+        // Remove deleted ones
         for id in Array(providers.keys) where isCustomProvider(id) && !activeIds.contains(id) {
             providers.removeValue(forKey: id)
             providerOrder.removeAll { $0 == id }
@@ -93,7 +95,7 @@ final class UsageStore: ObservableObject {
             providerErrors.removeValue(forKey: id)
             reports.removeAll { $0.providerId == id }
         }
-        // 新增/更新的：注册（总是替换实例，使编辑立即生效）+ 启动轮询
+        // Add/update: register (always replace the instance so edits take effect immediately) + start polling
         for config in configs {
             if providers[config.id] == nil {
                 providerOrder.append(config.id)
@@ -103,7 +105,7 @@ final class UsageStore: ObservableObject {
                 startPolling(id: config.id, stagger: 1)
             }
         }
-        // 删除的 provider 若在球簇上，一并移除（保持选择集合有效）
+        // If a deleted provider was on the ball cluster, drop it too (keep the selection valid)
         let valid = providerOrder
         selectedProviderIds = selectedProviderIds.filter { valid.contains($0) }
         persistSelection()
@@ -149,8 +151,8 @@ final class UsageStore: ObservableObject {
         }
         do {
             let report = try await provider.fetchUsage(credential: credential)
-            // await 期间该 provider 可能已被删除（自定义指标热移除）：重新确认，
-            // 否则已删除的 report/错误行会作为"幽灵"复活且无人能清理
+            // The provider may have been deleted during the await (custom-metric hot removal):
+            // re-check, otherwise the deleted report/error row resurrects as a ghost nothing can clean up
             guard providers[id] != nil else { return }
             upsert(report)
             providerErrors[id] = nil
@@ -164,20 +166,22 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// 自定义指标 provider 判定（按类型而非 id 前缀：手改 config.json 的 id 也能正确
-    /// 识别，热移除/齿轮路由才不致漏掉）
+    /// Custom-metric provider detection by type rather than id prefix: hand-edited
+    /// config.json ids are still recognized by hot-removal and gear routing
     func isCustomProvider(_ id: String) -> Bool {
         providers[id] is CustomMetricsProvider
     }
 
-    /// 凭证解析：localCLI 模式读本机 CLI 登录态目录；自定义指标（allowsNoCredential）
-    /// 无存储凭证时注入 .none —— 内网公开端点允许裸请求，不显示 "Not configured"。
+    /// Credential resolution: localCLI reads the local CLI login dir; custom metrics
+    /// (allowsNoCredential) get `.none` injected when nothing is stored — open internal
+    /// endpoints fetch bare, no "Not configured".
     private func resolveCredential(for provider: any Provider) -> Credential? {
         if provider.manifest.authMode == .localCLI {
             return CredentialStore.localCLICredential()
         }
         let stored = CredentialStore.credential(for: provider.manifest.id, from: CredentialStore.load())
-        // 注意必须写 Credential.none——返回类型是 Credential?，裸 .none 会解析成 Optional.none（nil）
+        // Must be Credential.none — the return type is Credential?, and a bare `.none`
+        // resolves to Optional.none (nil)
         if stored == nil, provider.manifest.allowsNoCredential {
             return Credential.none
         }
@@ -213,7 +217,8 @@ final class UsageStore: ObservableObject {
     private func loadCache() {
         guard let cache = CacheStore.load() else { return }
         let order = providerOrder
-        // 过滤掉已不存在的 provider（如重启前删除的自定义指标残留），防止幽灵报告复活
+        // Filter out providers that no longer exist (e.g. custom metrics deleted before
+        // restart) so ghost reports can't resurrect
         reports = cache.reports
             .filter { order.contains($0.providerId) }
             .sorted { lhs, rhs in
@@ -549,7 +554,7 @@ final class UsageStore: ObservableObject {
 
         // Upper (small): last-5h spend ("−¥x.xx"); Lower (big): balance. The 5h window is
         // labeled on the hover card (HoverSummaryView), not on the ball itself.
-        // 符号取自 currency（自定义指标的 USD/无单位余额不再硬编码 ¥）
+        // Symbol comes from currency (custom USD/unitless balances no longer hardcode ¥)
         let symbol = report.balance.map { currencySymbol($0.currency) } ?? ""
         let spentText = consumedOpt.map { "−\(symbol)\(String(format: "%.2f", $0))" } ?? "--"
 
@@ -577,14 +582,15 @@ final class UsageStore: ObservableObject {
         let corePct = coreQ?.percentUsedAt(now: now)
         let ringUsed = ringQ?.percentUsedAt(now: now)
         let midUsed = midQ?.percentUsedAt(now: now)
-        // 水位方向：used 语义 = 已用比例（满 = 耗尽）；默认 = 剩余比例（满 = 健康）。
-        // 红色/呼吸语义不变（used 高 = 剩余少 = 危险，HealthScore 自动正确）。
+        // Water direction: used semantics = used proportion (full = drained); default = remaining
+        // proportion (full = healthy). Red/breathing semantics stay (used high = little left =
+        // danger; HealthScore is automatically correct).
         let coreLevel = coreQ?.showsUsedLevel == true ? corePct : corePct.map { 1 - $0 }
         let isError = state == .error
         let center: String
         if isError { center = "!" }
         else if coreQ?.showsUsedLevel == true, let used = coreQ?.used {
-            // used 语义：中心 = 使用量数值
+            // used semantics: center = the usage value
             center = Self.formatNumber(used)
         }
         else if let coreLevel { center = "\(Int((coreLevel * 100).rounded()))%" }
@@ -593,7 +599,7 @@ final class UsageStore: ObservableObject {
         if isError { sub = "error" }
         else if state == .expired { sub = "expired" }
         else if coreQ?.showsUsedLevel == true {
-            // used 语义：有 max → 已用百分比；无 max → 单位缩写
+            // used semantics: with max → used percent; without max → unit abbreviation
             if let pct = corePct { sub = "\(Int((pct * 100).rounded()))%" }
             else { sub = Self.unitSymbol(coreQ?.unit) }
         }
@@ -613,12 +619,12 @@ final class UsageStore: ObservableObject {
                          alertBadges: badges)
     }
 
-    /// used 语义球中心数值：整数不带小数（880），否则一位小数（1234.5）
+    /// used-semantics ball center: integers without decimals (880), else one decimal (1234.5)
     private static func formatNumber(_ value: Double) -> String {
         value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 
-    /// used 语义无 max 时的单位缩写（球面 sub 文本）
+    /// Unit abbreviation for used semantics without max (ball sub text)
     private static func unitSymbol(_ unit: TokenRunwayCore.Unit?) -> String {
         switch unit {
         case .cny: return "¥"

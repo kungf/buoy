@@ -10,11 +10,11 @@ public enum AuthMode: String, Codable, Sendable {
     case consoleSession
     /// 复用本机 CLI 的 OAuth 登录态（读 CLI 凭证文件，如 Kimi Code；无需用户手填）
     case localCLI
-    /// 无需凭证（自定义指标的内网公开端点）
+    /// No credential required (custom metrics on open internal endpoints)
     case none
 }
 
-/// 凭证（注入式，适配器不持有；真实存储在 Keychain，见 DESIGN.md §10）
+/// Credential (injected; adapters don't own it; stored in Keychain, see DESIGN.md §10)
 public enum Credential: Sendable {
     case bearer(String)
     case volcAccessKey(ak: String, sk: String)
@@ -23,7 +23,7 @@ public enum Credential: Sendable {
     /// 控制台登录态：浏览器 SSO 会话 cookie（如 MiMo 的 api-platform_serviceToken + userId）。
     /// 由内嵌 WKWebView 登录后提取；过期时重新登录。
     case sessionCookies(serviceToken: String, userId: String)
-    /// 无需凭证：适配器直接裸请求（自定义指标公开端点）
+    /// No credential: adapter sends a bare request (custom metric on an open endpoint)
     case none
 }
 
@@ -84,8 +84,9 @@ public struct ProviderManifest: Sendable, Equatable {
     /// trwyctl env 变量前缀覆盖（如火山用 "VOLC" 而非 id "VOLCANO"）。nil -> id 大写。
     /// 外部契约：改动需同步 README 与用户 shell rc。
     public let envPrefixOverride: String?
-    /// 无凭证也可拉取（如自定义指标的内网公开端点）。true 时 UsageStore 在
-    /// 找不到存储凭证时注入 `.none`，fetchUsage 收到 .none 后裸请求。
+    /// Fetching works without credentials (e.g. custom metrics on open internal endpoints).
+    /// When true, UsageStore injects `.none` if no stored credential exists, and the
+    /// adapter sends a bare request.
     public let allowsNoCredential: Bool
 
     /// 实际 env 变量前缀，如 "DEEPSEEK" / "VOLC"。

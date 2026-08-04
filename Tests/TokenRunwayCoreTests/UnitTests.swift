@@ -1,10 +1,10 @@
 import XCTest
 @testable import TokenRunwayCore
 
-/// Unit 枚举编解码：固定 case 沿用旧缓存纯字符串格式，.custom(文本) 用 {"custom":"GBP"}。
+/// Unit codable: fixed cases keep the legacy plain-string format; .custom(text) uses {"custom":"GBP"}.
 final class UnitTests: XCTestCase {
 
-    // Foundation 也有 Unit（NSUnit），测试 target 里必须用模块限定消除歧义
+    // Foundation also has Unit (NSUnit) — qualify with the module in the test target
     private typealias QuotaUnit = TokenRunwayCore.Unit
 
     func testCodableRoundtripAllFixedCases() throws {
@@ -28,7 +28,7 @@ final class UnitTests: XCTestCase {
         XCTAssertEqual(decoded, unit)
     }
 
-    /// 旧缓存格式：固定 case 存为纯字符串（String raw value 时代遗留），必须仍可解码
+    /// Legacy cache format: fixed cases stored as plain strings (String-raw-value era) must still decode
     func testDecodesLegacyStringFormat() throws {
         // Arrange / Act / Assert
         let legacy: [(raw: String, unit: QuotaUnit)] = [
@@ -41,7 +41,7 @@ final class UnitTests: XCTestCase {
         }
     }
 
-    /// .custom 必须编码为 keyed object（而不是字符串），避免与固定 case 歧义
+    /// .custom must encode as a keyed object (not a string) to stay unambiguous vs. fixed cases
     func testCustomUnitEncodesAsKeyedObject() throws {
         // Act
         let data = try JSONEncoder().encode(QuotaUnit.custom("GBP"))

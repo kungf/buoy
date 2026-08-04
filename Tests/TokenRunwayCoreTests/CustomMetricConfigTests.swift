@@ -1,7 +1,7 @@
 import XCTest
 @testable import TokenRunwayCore
 
-/// CustomMetricConfig：用户自定义指标配置的 label 解析与 PromQL query 拼接。
+/// CustomMetricConfig: label parsing and PromQL query building for user-defined metrics.
 final class CustomMetricConfigTests: XCTestCase {
 
     private func makeConfig(label: String = "", metric: String = "api_budget_usage") -> CustomMetricConfig {
@@ -55,8 +55,9 @@ final class CustomMetricConfigTests: XCTestCase {
         XCTAssertEqual(pairs?.count, 0)
     }
 
-    /// 格式非法（缺 =、空键/空值、空段）必须返回 nil，让 fetch 层报错而非静默丢标签。
-    /// 注意 "team==data" 是合法的：value 可以是任意字符串（=data），不在此列。
+    /// Malformed labels (missing =, empty key/value, empty segments) must return nil so the
+    /// fetch layer errors instead of silently dropping labels. "team==data" is legal: values
+    /// may be any string (=data) and are not rejected.
     func testLabelPairsRejectsMalformedPairs() {
         // Arrange / Act / Assert
         for bad in ["team", "=data", "team=", "a=b,", ",a=b", "a=b,,c=d"] {
@@ -65,7 +66,7 @@ final class CustomMetricConfigTests: XCTestCase {
         }
     }
 
-    /// 值中的 `=` 保留（maxSplits=1 按第一个 = 切分）
+    /// `=` inside a value is preserved (maxSplits=1 splits at the first =)
     func testLabelPairsKeepsEqualsInsideValue() throws {
         // Arrange
         let config = makeConfig(label: "auth=basic=yes")
@@ -138,7 +139,7 @@ final class CustomMetricConfigTests: XCTestCase {
     }
 
     func testDecodesMissingOptionalFields() throws {
-        // Arrange：label 是必填（默认空串），max/unit 可选
+        // Arrange: label is required (defaults to empty string), max/unit optional
         let json = #"{"id":"custom-1","name":"x","baseURL":"u","metric":"m","label":""}"#
 
         // Act
@@ -151,7 +152,7 @@ final class CustomMetricConfigTests: XCTestCase {
         XCTAssertEqual(decoded.name, "x")
     }
 
-    /// 旧配置（无 semantics 字段）默认 .used —— 语义默认值是产品决策
+    /// Legacy configs (no semantics field) default to .used — the default is a product decision
     func testDecodesLegacyConfigDefaultsToUsedSemantics() throws {
         // Arrange
         let json = #"{"id":"custom-1","name":"x","baseURL":"u","metric":"m","label":""}"#
@@ -173,7 +174,7 @@ final class CustomMetricConfigTests: XCTestCase {
         let a = CustomMetricConfig(name: "x", baseURL: "u", metric: "m")
         let b = CustomMetricConfig(name: "x", baseURL: "u", metric: "m")
 
-        // Assert：id 是稳定的持久化键（选择/球位置状态依赖它），必须唯一
+        // Assert: id is a stable persistence key (selection/ball-position state depends on it) — must be unique
         XCTAssertNotEqual(a.id, b.id)
         XCTAssertFalse(a.id.isEmpty)
     }

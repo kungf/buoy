@@ -1,9 +1,9 @@
 import SwiftUI
 import TokenRunwayCore
 
-/// 自定义指标管理（Dashboard 工具栏入口）：列表 + 增删改 + 测试查询。
-/// 配置存 ~/.trwy/config.json 的 customMetrics（与 trwyctl 共享）；token 走 providers[<id>].token。
-/// 保存/删除后调用 store.reloadCustomMetrics() 热加载，无需重启。
+/// Custom-metric management (Dashboard toolbar entry): list + add/edit/delete + test query.
+/// Config lives in ~/.trwy/config.json customMetrics (shared with trwyctl); token via providers[<id>].token.
+/// Save/delete calls store.reloadCustomMetrics() — hot reload, no restart needed.
 struct CustomMetricsSettingsView: View {
     @ObservedObject var store: UsageStore
     @Environment(\.dismiss) private var dismiss
@@ -125,7 +125,7 @@ struct CustomMetricsSettingsView: View {
         return summary
     }
 
-    /// 测试查询：用当前配置立即拉一次，展示 usage / max（或余额）
+    /// Test query: fetch once with the current config, show usage / max (or balance)
     private func test(_ config: CustomMetricConfig) {
         testingId = config.id
         testResults.removeValue(forKey: config.id)
@@ -164,7 +164,7 @@ struct CustomMetricsSettingsView: View {
         configs = CustomMetricConfigStore.load()
     }
 
-    /// 错误转可读文案（与 UsageStore 一致；避免透传服务端自由文本）
+    /// Human-readable error text (same as UsageStore; never leaks server free text)
     static func describe(_ error: Error) -> String {
         guard let providerError = error as? ProviderError else { return error.localizedDescription }
         switch providerError {
@@ -178,9 +178,9 @@ struct CustomMetricsSettingsView: View {
     }
 }
 
-/// 新增/编辑自定义指标表单。必填：名称、Prometheus 地址、指标；可选：标签、上限、单位、令牌。
+/// Add/edit custom-metric form. Required: name, Prometheus URL, metric; optional: label, cap, unit, token.
 struct CustomMetricEditorView: View {
-    /// nil = 新建
+    /// nil = creating a new one
     let config: CustomMetricConfig?
     let onSave: (CustomMetricConfig) -> Void
 
@@ -190,7 +190,7 @@ struct CustomMetricEditorView: View {
     @State private var baseURL = ""
     @State private var metric = ""
     @State private var label = ""
-    @State private var semanticsChoice = 0   // 0 = 已使用（默认），1 = 余额
+    @State private var semanticsChoice = 0   // 0 = used (default), 1 = remaining
     @State private var maxText = ""
     @State private var unitChoice = 0
     @State private var customUnit = ""
@@ -199,7 +199,7 @@ struct CustomMetricEditorView: View {
     @State private var isTesting = false
     @State private var testResult: String?
 
-    // 覆盖 Unit 全部固定 case，保证编辑-保存往返不丢单位
+    // Covers every fixed Unit case so edit-save round-trips never lose the unit
     private static let unitOptions = ["无单位", "人民币", "美元", "Tokens", "点数", "自定义"]
     private static let semanticsOptions = ["已使用（用量）", "余额（剩余量）"]
 
@@ -314,7 +314,7 @@ struct CustomMetricEditorView: View {
     private var parsedMax: Double? {
         let trimmed = maxText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        // Double("nan")/"inf" 会解析成功，必须拒绝；非数字直接提示
+        // Double("nan")/"inf" parse successfully — reject them; non-numeric input gets a hint
         guard let value = Double(trimmed), value.isFinite else {
             error = "上限必须是数字（如 5000；留空 = 余额模式）"
             return nil
@@ -328,7 +328,7 @@ struct CustomMetricEditorView: View {
             error = "上限需大于 0（留空 = 无水位）"
             return nil
         }
-        // Foundation 也有 Unit（NSUnit），App target 里需模块限定
+        // Foundation also has Unit (NSUnit) — qualify with the module in the App target
         let unit: TokenRunwayCore.Unit?
         switch unitChoice {
         case 1: unit = .cny
@@ -336,7 +336,7 @@ struct CustomMetricEditorView: View {
         case 3: unit = .tokens
         case 4: unit = .credits
         case 5:
-            // 自定义单位留空 = 无单位（避免存 .custom("")）
+            // Empty custom unit = no unit (avoid storing .custom(""))
             let text = customUnit.trimmingCharacters(in: .whitespaces)
             unit = text.isEmpty ? nil : .custom(text)
         default: unit = nil
@@ -347,14 +347,15 @@ struct CustomMetricEditorView: View {
             baseURL: baseURL.trimmingCharacters(in: .whitespaces),
             metric: metric.trimmingCharacters(in: .whitespaces),
             label: label.trimmingCharacters(in: .whitespaces),
-            max: parsedMax,   // used = 用量上限；remaining = 总额度（剩余/总额）
+            max: parsedMax,   // used = consumption cap; remaining = total cap (remaining/total)
             unit: unit,
             semantics: semantics
         )
     }
 
-    /// 校验并清理令牌：Authorization 头不允许控制字符（含 \r\n——直接进 header 会
-    /// 触发 Foundation 崩溃或请求失败），发现即拒绝并提示
+    /// Validate and clean the token: Authorization headers reject control characters
+    /// (incl. \r\n — passing them straight to the header crashes or fails the request),
+    /// so reject with a hint
     private func sanitizedToken() -> String? {
         let trimmed = token.trimmingCharacters(in: .whitespaces)
         if trimmed.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) {
@@ -364,7 +365,7 @@ struct CustomMetricEditorView: View {
         return trimmed
     }
 
-    /// 测试查询：无需保存即可验证 metric/label 是否正确
+    /// Test query: verify metric/label without saving
     private func testQuery() {
         error = nil
         testResult = nil
@@ -375,7 +376,8 @@ struct CustomMetricEditorView: View {
             defer { isTesting = false }
             do {
                 let provider = CustomMetricsProvider(config: config)
-                // 优先用表单里刚输入的 token（新配置还没落盘）；空则用存储的，再无则裸请求
+                // Prefer the in-form token (new configs aren't persisted yet); fall back to the
+                // stored one, then bare
                 let credential: Credential = typed.isEmpty
                     ? (CredentialStore.credential(for: config.id, from: CredentialStore.load()) ?? .none)
                     : .bearer(typed)
@@ -410,7 +412,7 @@ struct CustomMetricEditorView: View {
         case .some(.none): unitChoice = 0
         case nil: unitChoice = 0
         }
-        // 回填已有 token（仅用于展示，不强制）
+        // Prefill the stored token (display only, not required)
         token = CredentialStore.load()?.providers[config.id]?.token ?? ""
     }
 
@@ -422,13 +424,13 @@ struct CustomMetricEditorView: View {
             let url = CredentialStore.defaultURL
             var file = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
             if !typed.isEmpty {
-                // 非空 token：写 providers[<id>].token，复用现有 bearer 通道
+                // Non-empty token: write providers[<id>].token via the existing bearer channel
                 var entry = file.providers[config.id] ?? ProviderCredentials()
                 entry.auth = "bearer"
                 entry.token = typed
                 file.providers[config.id] = entry
             } else if file.providers[config.id]?.token != nil {
-                // 清空 token 字段 = 移除已存令牌（否则旧 token 会一直带着）
+                // Emptying the token field removes the stored token (otherwise it lingers forever)
                 var entry = file.providers[config.id] ?? ProviderCredentials()
                 entry.token = nil
                 entry.auth = nil
@@ -436,7 +438,7 @@ struct CustomMetricEditorView: View {
             }
             if file.providers[config.id]?.token == nil && file.providers[config.id]?.ak == nil
                 && file.providers[config.id]?.sk == nil && file.providers[config.id]?.apiKey == nil {
-                file.providers.removeValue(forKey: config.id)   // 空条目不落盘
+                file.providers.removeValue(forKey: config.id)   // don't persist empty entries
             }
             try CredentialStore.save(file, to: url)
             onSave(config)

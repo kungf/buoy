@@ -31,8 +31,9 @@ public struct ProviderCredentials: Codable, Sendable, Equatable {
 /// 凭证配置文件（chmod 600，仓库外；M2 迁移 Keychain，DESIGN.md §10）
 public struct TokenRunwayConfigFile: Codable, Sendable, Equatable {
     public var providers: [String: ProviderCredentials]
-    /// 用户自定义指标配置（非机密；token 仍走 providers[<id>].token）。
-    /// 存同一文件而非 UserDefaults：trwyctl 与 App 分属不同进程域，需共享。
+    /// User custom-metric configs (non-secret; tokens still go via providers[<id>].token).
+    /// Same file rather than UserDefaults: trwyctl and the App run in different process
+    /// domains and need to share.
     public var customMetrics: [CustomMetricConfig]
 
     public init(providers: [String: ProviderCredentials], customMetrics: [CustomMetricConfig] = []) {
@@ -40,7 +41,7 @@ public struct TokenRunwayConfigFile: Codable, Sendable, Equatable {
         self.customMetrics = customMetrics
     }
 
-    /// 旧 config.json 无 customMetrics 字段：decodeIfPresent 兜底为空数组
+    /// Legacy config.json has no customMetrics field: decodeIfPresent falls back to []
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         providers = try container.decode([String: ProviderCredentials].self, forKey: .providers)
@@ -48,13 +49,13 @@ public struct TokenRunwayConfigFile: Codable, Sendable, Equatable {
     }
 }
 
-/// 自定义指标配置的读取与增删（与 providers 同文件，原子写回）。
+/// Custom-metric config load / upsert / remove (same file as providers, atomic write-back).
 public enum CustomMetricConfigStore {
     public static func load(from url: URL = CredentialStore.defaultURL) -> [CustomMetricConfig] {
         CredentialStore.load(from: url)?.customMetrics ?? []
     }
 
-    /// 新增/更新（按 id 原地替换保持顺序；不动其余配置与 providers）
+    /// Add or update (replace in place by id, keeping order; other configs and providers untouched)
     public static func upsert(_ config: CustomMetricConfig, to url: URL = CredentialStore.defaultURL) throws {
         var file = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
         if let index = file.customMetrics.firstIndex(where: { $0.id == config.id }) {
@@ -65,7 +66,7 @@ public enum CustomMetricConfigStore {
         try CredentialStore.save(file, to: url)
     }
 
-    /// 删除配置并清理同 id 的凭证条目
+    /// Remove a config and its same-id credential entry
     public static func remove(id: String, from url: URL = CredentialStore.defaultURL) throws {
         var file = CredentialStore.load(from: url) ?? TokenRunwayConfigFile(providers: [:])
         file.customMetrics.removeAll { $0.id == id }
@@ -76,12 +77,12 @@ public enum CustomMetricConfigStore {
 
 /// 凭证加载与映射。token 绝不打印、不写日志。
 public enum CredentialStore {
-    /// 配置路径。get-set：测试可重定向到临时文件（默认 ~/.trwy/config.json）
+    /// Config path. get-set: tests can redirect to a temp file (default ~/.trwy/config.json)
     public static var defaultURL: URL {
         get { defaultURLStorage }
         set { defaultURLStorage = newValue }
     }
-    /// nonisolated(unsafe)：仅测试重定向用，生产路径只读
+    /// nonisolated(unsafe): test redirect only; production path is read-only
     private nonisolated(unsafe) static var defaultURLStorage = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".trwy/config.json")
 
@@ -96,8 +97,9 @@ public enum CredentialStore {
         try FileManager.default.createDirectory(at: dir,
                                                 withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
-        // 目录若已存在（旧版本创建/手动创建）不会应用 createDirectory 的权限，
-        // 必须每次保存都强制 0700，否则 .atomic 临时文件在 chmod 600 前可能按 umask 落盘
+        // A pre-existing dir (created by an older version or by hand) won't pick up the
+        // createDirectory permissions — force 0700 on every save, otherwise the .atomic
+        // temp file may land with umask permissions before the chmod 600
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         let data = try JSONEncoder().encode(config)
         try data.write(to: url, options: .atomic)

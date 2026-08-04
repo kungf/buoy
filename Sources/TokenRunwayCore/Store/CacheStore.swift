@@ -13,12 +13,12 @@ public struct TokenRunwayCache: Codable, Sendable, Equatable {
 }
 
 public enum CacheStore {
-    /// 缓存路径。get-set：测试可重定向到临时文件（默认 ~/.trwy/cache.json）
+    /// Cache path. get-set: tests can redirect to a temp file (default ~/.trwy/cache.json)
     public static var defaultURL: URL {
         get { defaultURLStorage }
         set { defaultURLStorage = newValue }
     }
-    /// nonisolated(unsafe)：仅测试重定向用，生产路径只读
+    /// nonisolated(unsafe): test redirect only; production path is read-only
     private nonisolated(unsafe) static var defaultURLStorage = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".trwy/cache.json")
 

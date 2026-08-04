@@ -1,14 +1,14 @@
 import XCTest
 @testable import TokenRunwayCore
 
-/// CustomMetricConfigStore：自定义指标配置在 ~/.trwy/config.json 的增删查
-/// （与 providers 同文件原子写回，保证 trwyctl 与 App 共享）。
+/// CustomMetricConfigStore: custom-metric config add/query/remove in ~/.trwy/config.json
+/// (same file as providers, atomic write-back, shared by trwyctl and the App).
 final class CustomMetricConfigStoreTests: XCTestCase {
     private var tempURL: URL!
 
     override func setUp() {
         super.setUp()
-        // 专用子目录：save 会 chmod 目录 0700，不能直接改共享的系统临时目录 T
+        // Dedicated subdir: save chmods the dir to 0700 and must not touch the shared system temp dir T
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("trwy-custom-test-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -29,14 +29,14 @@ final class CustomMetricConfigStoreTests: XCTestCase {
         XCTAssertEqual(CustomMetricConfigStore.load(from: tempURL), [])
     }
 
-    /// 旧 config.json（无 customMetrics 字段）仍可解码，不破坏现有用户
+    /// Legacy config.json (no customMetrics field) still decodes — existing users unaffected
     func testLoadFromLegacyFileWithoutCustomMetrics() {
         // Arrange
         try? #"{"providers":{"deepseek":{"token":"t"}}}"#.data(using: .utf8)!.write(to: tempURL)
 
         // Act / Assert
         XCTAssertEqual(CustomMetricConfigStore.load(from: tempURL), [])
-        // 且 providers 未被破坏
+        // and providers are untouched
         let config = CredentialStore.load(from: tempURL)
         XCTAssertEqual(config?.providers["deepseek"]?.token, "t")
     }
@@ -46,7 +46,7 @@ final class CustomMetricConfigStoreTests: XCTestCase {
         try CustomMetricConfigStore.upsert(makeConfig(id: "custom-1"), to: tempURL)
         try CustomMetricConfigStore.upsert(makeConfig(id: "custom-2"), to: tempURL)
 
-        // Act：替换 custom-1（改 name），不新增
+        // Act: replace custom-1 (rename), no new entry
         var updated = makeConfig(id: "custom-1")
         updated.name = "新预算"
         try CustomMetricConfigStore.upsert(updated, to: tempURL)
@@ -57,9 +57,9 @@ final class CustomMetricConfigStoreTests: XCTestCase {
         XCTAssertEqual(configs.first { $0.id == "custom-1" }?.name, "新预算")
     }
 
-    /// upsert 不破坏同文件的 providers 条目（token 等）
+    /// upsert leaves same-file providers entries (tokens etc.) intact
     func testUpsertPreservesProviders() throws {
-        // Arrange：先有 providers 条目
+        // Arrange: a providers entry exists first
         var file = TokenRunwayConfigFile(providers: ["deepseek": ProviderCredentials(token: "t")])
         try CredentialStore.save(file, to: tempURL)
 
@@ -72,7 +72,7 @@ final class CustomMetricConfigStoreTests: XCTestCase {
         XCTAssertEqual(saved?.customMetrics.map(\.id), ["custom-1"])
     }
 
-    /// remove 同时清理同 id 的凭证条目（providers[<id>].token）
+    /// remove also cleans the same-id credential entry (providers[<id>].token)
     func testRemoveCleansConfigAndCredential() throws {
         // Arrange
         try CustomMetricConfigStore.upsert(makeConfig(id: "custom-1"), to: tempURL)
@@ -83,7 +83,7 @@ final class CustomMetricConfigStoreTests: XCTestCase {
         // Act
         try CustomMetricConfigStore.remove(id: "custom-1", from: tempURL)
 
-        // Assert：配置与凭证一并删除
+        // Assert: config and credential are both removed
         let saved = CredentialStore.load(from: tempURL)
         XCTAssertEqual(saved?.customMetrics, [])
         XCTAssertNil(saved?.providers["custom-1"])

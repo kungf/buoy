@@ -53,7 +53,7 @@ final class ProviderRegistryTests: XCTestCase {
         // Act
         let all = ProviderRegistry.all(includingCustom: custom)
 
-        // Assert：内置 provider 在前、自定义在后，顺序稳定（决定球簇排列）
+        // Assert: built-ins first, customs last, stable order (drives ball-cluster arrangement)
         XCTAssertEqual(Array(all.prefix(ProviderRegistry.all.count)).map(\.id),
                        ProviderRegistry.ids)
         XCTAssertEqual(Array(all.suffix(custom.count)).map(\.id), ["custom-1", "custom-2"])
