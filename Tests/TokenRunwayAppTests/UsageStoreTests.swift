@@ -179,7 +179,7 @@ final class UsageStoreTests: XCTestCase {
         defer { store.stop() }
 
         let config = CustomMetricConfig(id: "custom-1", name: "预算",
-                                        baseURL: "http://prom:9090", metric: "usage")
+                                        url: "https://api.corp.com/v1/usage")
         try CustomMetricConfigStore.upsert(config, to: tempURL)
 
         // Act: save, then hot-reload
@@ -213,13 +213,13 @@ final class UsageStoreTests: XCTestCase {
 
         // Save (old name) → hot-reload
         try CustomMetricConfigStore.upsert(
-            CustomMetricConfig(id: "custom-1", name: "旧名", baseURL: "u", metric: "m"), to: tempURL)
+            CustomMetricConfig(id: "custom-1", name: "旧名", url: "https://api.corp.com/v1/usage"), to: tempURL)
         store.reloadCustomMetrics()
         XCTAssertEqual(store.providerDisplayName(for: "custom-1"), "旧名")
 
         // Edit (new name) → hot-reload: displayName updates immediately
         try CustomMetricConfigStore.upsert(
-            CustomMetricConfig(id: "custom-1", name: "新名", baseURL: "u", metric: "m"), to: tempURL)
+            CustomMetricConfig(id: "custom-1", name: "新名", url: "https://api.corp.com/v1/usage"), to: tempURL)
         store.reloadCustomMetrics()
         XCTAssertEqual(store.providerDisplayName(for: "custom-1"), "新名")
     }
@@ -248,7 +248,7 @@ final class UsageStoreTests: XCTestCase {
 
         // A report already exists (simulating a successful fetch)
         try CustomMetricConfigStore.upsert(
-            CustomMetricConfig(id: "custom-1", name: "预算", baseURL: "u", metric: "m"), to: configURL)
+            CustomMetricConfig(id: "custom-1", name: "预算", url: "https://api.corp.com/v1/usage"), to: configURL)
         store.reloadCustomMetrics()
         installReport(store, id: "custom-1")
         store.refreshIfStale()   // no-op; we don't depend on it — assert the cache directly

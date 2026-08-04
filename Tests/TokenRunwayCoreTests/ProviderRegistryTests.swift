@@ -46,8 +46,8 @@ final class ProviderRegistryTests: XCTestCase {
     func test_includingCustomMergesCustomProvidersAfterBuiltins() {
         // Arrange
         let custom = [
-            CustomMetricConfig(id: "custom-1", name: "预算 A", baseURL: "u", metric: "m"),
-            CustomMetricConfig(id: "custom-2", name: "预算 B", baseURL: "u", metric: "m"),
+            CustomMetricConfig(id: "custom-1", name: "预算 A", url: "https://api.corp.com/v1/usage"),
+            CustomMetricConfig(id: "custom-2", name: "预算 B", url: "https://api.corp.com/v1/usage"),
         ]
 
         // Act
@@ -63,5 +63,21 @@ final class ProviderRegistryTests: XCTestCase {
     func test_includingCustomWithEmptyListReturnsBuiltinsOnly() {
         // Act / Assert
         XCTAssertEqual(ProviderRegistry.all(includingCustom: []).map(\.id), ProviderRegistry.ids)
+    }
+
+    /// Customs always use the output-contract adapter; merge order / cluster arrangement unchanged
+    func test_includingCustomUsesOutputContractAdapter() {
+        // Arrange
+        let custom = [
+            CustomMetricConfig(id: "custom-1", name: "预算", url: "https://api.corp.com/v1/usage"),
+            CustomMetricConfig(id: "custom-2", name: "接口", url: "https://api.corp.com/v1/usage"),
+        ]
+
+        // Act
+        let all = ProviderRegistry.all(includingCustom: custom)
+
+        // Assert
+        XCTAssertEqual(Array(all.suffix(custom.count)).map(\.id), ["custom-1", "custom-2"])
+        XCTAssertTrue(all.contains { ($0 as? CustomMetricsProvider)?.config.id == "custom-2" })
     }
 }

@@ -36,26 +36,53 @@ Adapter-first architecture: every provider maps onto one unified `Quota` model.
 | MiMo | Monthly Token Plan |
 | Zhipu | Monthly / weekly token quotas |
 | MiniMax | 5h rolling window + weekly |
-| Custom metrics | Your own Prometheus metric as a quota ball (see [Custom metrics](#custom-metrics)) |
+| Custom metrics | Your own HTTP API as a quota ball (see [Custom metrics](#custom-metrics)) |
 
 **Not yet**: OpenAI · Anthropic — planned next.
 
 ## Custom metrics
 
-Point TokenRunway at your own Prometheus to show your internal usage — GPU quota, API budget, token consumption — as a ball next to the built-in providers. Each custom metric is one ball.
+Point TokenRunway at your own HTTP endpoint to show your internal usage — GPU quota, API budget, token consumption — as a ball next to the built-in providers. Each custom metric is one ball. The endpoint just needs to return the output-contract JSON below — an internal usage service, an API gateway, even a static JSON file on a CDN.
 
 **Add one**: Dashboard toolbar → `自定义指标` (chart icon) → `+`.
 
 | Field | Example | Notes |
 |---|---|---|
 | 名称 | GPU 配额 | Ball label |
-| Prometheus 地址 | `http://prom.internal:9090` | Instant-query API (`/api/v1/query`) |
-| 指标 | `gpu_usage` or `sum(gpu_usage)` | Metric name or full PromQL expression |
-| 标签 | `cluster=prod,env=cn` | Optional `xx=xx` filter, comma-separated |
+| 接口地址 | `https://api.corp.com/v1/usage` | Full endpoint URL, may contain `{userId}` |
+| 用户 ID | `wyang` | 唯一标识当前用户 (placeholder or `user_id` param) |
 | 语义 | 已使用 / 余额 | **已使用** (default): value = consumed; **余额**: value = remaining |
 | 上限 / 总额度 | `10000` | Optional. Used → water = used/max (**full = drained**); remaining → water = remaining/max (full = healthy) |
 | 单位 | 无 / 人民币 / 美元 / Tokens / 点数 / custom | Optional |
 | 访问令牌 | — | Optional Bearer token; leave empty for open internal endpoints |
+
+**请求**：`GET <url>`，可选 `Authorization: Bearer <token>`。
+
+- URL 含 `{userId}` 占位符 → 替换为用户 ID（RESTful 风格）：`https://api.corp.com/v1/users/{userId}/usage`
+- 无占位符且用户 ID 非空 → 自动追加 `user_id` 参数：`https://api.corp.com/v1/usage?user_id=wyang`
+
+**Output 契约**（HTTP 200 + JSON）：
+
+| Field | Required | Notes |
+|---|---|---|
+| `value` | ✅ | 当前值; number or numeric string |
+| `max` | — | 上限; omitted → no water level |
+| `semantics` | — | `"used"` (default) or `"remaining"`; overrides the config |
+| `unit` | — | `CNY` / `USD` / any text; overrides the config, `"none"` clears it |
+| `label` | — | Display name; overrides the configured name |
+| `updatedAt` | — | ISO 8601 timestamp (accepted, not yet checked) |
+| `error` | — | Business error; the ball shows a generic error state |
+
+```json
+{"value": 1234.5, "max": 5000, "semantics": "used", "unit": "CNY"}
+```
+
+Rules:
+- Output fields override the config; missing optional fields fall back to it.
+- Invalid output (missing/non-numeric `value`, bad `semantics`, malformed JSON, HTTP 4xx/5xx, `error` field) shows a generic error state — server free text is never rendered.
+- All four ball shapes apply (see below): `semantics` × `max` from either the config or the output.
+
+**Example** — per-user GPU quota via a RESTful endpoint: 名称 `GPU 配额`, 接口地址 `https://api.corp.com/v1/users/{userId}/usage`, 用户 ID `wyang`, 语义 已使用, 上限 `5000`, 单位 人民币 — the ball shows `1234` with water at 24.7%.
 
 **Ball shapes**
 
@@ -66,16 +93,11 @@ Point TokenRunway at your own Prometheus to show your internal usage — GPU quo
 | remaining | yes | center = remaining percent, water = remaining/max (full = healthy) |
 | remaining | no | balance ball (remaining / high-water, ¥ / $ badge) |
 
-**Example** — monthly API budget, consumed so far:
-
-- 名称 `本月 API 预算`, 指标 `api_budget_usage`, 标签 `team=data`, 语义 已使用, 上限 `5000`, 单位 人民币
-- The ball shows e.g. `1234` with water at 24.7% — red and breathing hard as it approaches 100%.
-
 Notes:
-- Multi-series results take the first match — use `sum(...)` / `sum by (...)` in the metric field to aggregate.
-- If your metric is already a *remaining* gauge (`budget_remaining`), pick 余额 semantics instead.
+- If your endpoint returns a *remaining* value (e.g. `budget_remaining`), pick 余额 semantics instead of 已使用.
 - Config lives in `~/.trwy/config.json` (`customMetrics`), shared with `trwyctl` — `trwyctl all` includes custom metrics, `trwyctl <custom-id>` queries one.
 - Changes apply immediately (hot reload) — no restart needed.
+- Pre-Prometheus-removal configs (`baseURL`/`metric` keys) still load but report "missing url" — re-edit them with the new 接口地址 field.
 
 ## Requirements
 
@@ -144,7 +166,7 @@ UI           FloatingBall (NSPanel) · Dashboard (accordion) · Settings (per-pr
               │ subscribes @Published
 Service      UsageStore (ObservableObject) · ForecastEngine (burn rate/ETA)
               │ scheduling                    │ credentials
-Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · MiMo(consoleSession) · Zhipu(bearer) · MiniMax(bearer) · Custom metrics(PromQL) · [OpenAI/Anthropic WIP]
+Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(localCLI) · MiMo(consoleSession) · Zhipu(bearer) · MiniMax(bearer) · Custom metrics(HTTP output contract) · [OpenAI/Anthropic WIP]
               │
 Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
@@ -153,13 +175,13 @@ Four SPM targets:
 - **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) — model / auth / forecast / providers / networking
 - **TokenRunwayApp** — floating ball + dashboard UI
 - **trwyctl** — CLI (integration / debugging)
-- **TokenRunwayCoreTests** — unit tests (219/219)
+- **TokenRunwayCoreTests** — unit tests (225/225)
 
 ## Security
 
 - API keys live only in `~/.trwy/config.json` (chmod 600, outside the repo); **never committed, never logged, never sent to third parties** (M2 will migrate to Keychain).
 - `Credential` implements a redacting `CustomStringConvertible` — any `print()` shows only the first 4 characters.
-- Built-in providers are HTTPS-only (ATS + certificate validation). **Custom metrics** allow plain `http://` for internal Prometheus endpoints (ATS exemption) — a known tradeoff for single-user LAN tools; use HTTPS when the endpoint is reachable off the local network.
+- Built-in providers are HTTPS-only (ATS + certificate validation). **Custom metrics** allow plain `http://` for internal endpoints (ATS exemption) — a known tradeoff for single-user LAN tools; use HTTPS when the endpoint is reachable off the local network.
 
 ## Documentation
 
