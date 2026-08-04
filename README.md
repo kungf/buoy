@@ -111,10 +111,11 @@ Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(l
 Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
 
-Three SPM targets:
+Four SPM targets:
 - **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) — model / auth / forecast / providers / networking
 - **TokenRunwayApp** — floating ball + dashboard UI
-- **TokenRunwayCoreTests** — unit tests (160/160)
+- **trwyctl** — CLI (integration / debugging)
+- **TokenRunwayCoreTests** — unit tests (164/164)
 
 ## Security
 
