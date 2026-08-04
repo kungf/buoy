@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TokenRunway — macOS AI Token Runway Monitor</title>
+  <meta name="description" content="TokenRunway is an always-on macOS floating ball that shows how many minutes of AI you have left — tracking Volcano, DeepSeek and Kimi Code token quotas, burn rate and ETA at a glance.">
+  <meta name="keywords" content="macOS, AI token quota monitor, LLM usage tracking, token runway, Volcano engine quota, DeepSeek balance, Kimi Code quota, desktop floating ball, burn rate, ETA">
+  <meta name="author" content="kungf">
+  <link rel="canonical" href="https://kungf.github.io/token-runway/">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TokenRunway">
+  <meta property="og:title" content="TokenRunway — macOS AI Token Runway Monitor">
+  <meta property="og:description" content="An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across all your providers, before you hit empty.">
+  <meta property="og:url" content="https://kungf.github.io/token-runway/">
+  <meta property="og:image" content="https://raw.githubusercontent.com/kungf/token-runway/main/assets/ball_volcano.png">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="TokenRunway — macOS AI Token Runway Monitor">
+  <meta name="twitter:description" content="An always-on macOS desktop floating ball that shows how many minutes of AI you have left — at a glance, across all your providers, before you hit empty.">
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/kungf/token-runway/main/assets/ball_volcano.png">
+
+  <!-- Structured data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "TokenRunway",
+    "alternateName": "trwy",
+    "description": "An always-on macOS desktop floating ball that shows how many minutes of AI you have left — unified quota monitoring for Volcano, DeepSeek and Kimi Code, with burn-rate prediction and ETA warnings.",
+    "url": "https://kungf.github.io/token-runway/",
+    "codeRepository": "https://github.com/kungf/token-runway",
+    "operatingSystem": "macOS 14.0+ (Sonoma)",
+    "applicationCategory": "UtilityApplication",
+    "softwareVersion": "pre-release",
+    "license": "https://github.com/kungf/token-runway/blob/main/LICENSE",
+    "author": { "@type": "Person", "name": "kungf" },
+    "screenshot": "https://raw.githubusercontent.com/kungf/token-runway/main/assets/dashboard.png",
+    "featureList": [
+      "Glanceable desktop floating ball with remaining-quota rings",
+      "Unified multi-provider dashboard (Volcano, DeepSeek, Kimi Code)",
+      "Burn-rate based ETA prediction",
+      "Breathing animation mirrors real burn rate"
+    ]
+  }
+  </script>
+
+  <style>
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #9198a1;
+      --accent: #f05138;
+      --accent2: #3fb950;
+      --card: #161b22;
+      --border: #30363d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 0; border-bottom: 1px solid var(--border);
+    }
+    .brand { font-size: 1.15rem; font-weight: 700; }
+    .brand span { color: var(--accent); }
+    header a { color: var(--muted); text-decoration: none; font-size: .9rem; }
+    header a:hover { color: var(--fg); }
+    .hero { text-align: center; padding: 64px 0 32px; }
+    .hero h1 { font-size: 2.6rem; letter-spacing: -.02em; }
+    .hero h1 span { color: var(--accent); }
+    .hero p.lede { color: var(--muted); max-width: 620px; margin: 16px auto 28px; font-size: 1.1rem; }
+    .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 40px; }
+    .badge {
+      border: 1px solid var(--border); border-radius: 999px; padding: 4px 14px;
+      font-size: .8rem; color: var(--muted); text-decoration: none;
+    }
+    .badge b { color: var(--fg); font-weight: 600; }
+    .hero-imgs { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .hero-imgs img { border-radius: 14px; border: 1px solid var(--border); width: 340px; max-width: 100%; }
+    section { padding: 40px 0; }
+    section + section { border-top: 1px solid var(--border); }
+    h2 { font-size: 1.4rem; margin-bottom: 8px; }
+    .sub { color: var(--muted); margin-bottom: 24px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .card h3 { font-size: 1rem; margin-bottom: 6px; }
+    .card p { color: var(--muted); font-size: .9rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .92rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+    code {
+      background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+      padding: 2px 7px; font-size: .85em;
+      font-family: "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    pre {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px; overflow-x: auto; margin: 10px 0; font-size: .85rem;
+      font-family: "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    pre .c { color: var(--muted); }
+    ol.steps { padding-left: 20px; }
+    ol.steps li { margin: 6px 0; }
+    .note { color: var(--muted); font-size: .88rem; }
+    footer {
+      border-top: 1px solid var(--border); padding: 28px 0 48px;
+      color: var(--muted); font-size: .85rem; text-align: center;
+    }
+    footer a { color: var(--fg); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Token<span>Runway</span> 🛬</div>
+    <a href="https://github.com/kungf/token-runway">GitHub →</a>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>How many minutes of AI <span>do you have left?</span></h1>
+      <p class="lede">An always-on macOS desktop floating ball that shows your AI token runway — at a glance, across all your providers, before you hit empty.</p>
+      <div class="badges">
+        <span class="badge"><b>Swift 6</b> + SwiftUI / AppKit</span>
+        <span class="badge">macOS <b>14.0+</b></span>
+        <span class="badge">MIT License</span>
+        <a class="badge" href="https://github.com/kungf/token-runway">Open Source</a>
+      </div>
+      <div class="hero-imgs">
+        <img src="https://raw.githubusercontent.com/kungf/token-runway/main/assets/ball_volcano.gif" alt="TokenRunway floating ball showing Volcano monthly, weekly and 5-hour quota rings" loading="lazy">
+        <img src="https://raw.githubusercontent.com/kungf/token-runway/main/assets/ball_deepseek.gif" alt="TokenRunway floating ball and hover card showing DeepSeek balance and last-5h spend" loading="lazy">
+      </div>
+    </div>
+
+    <section>
+      <h2>Why TokenRunway</h2>
+      <p class="sub">“Runway” is the startup word for how long you can keep burning before you're out. TokenRunway puts that number on your desktop.</p>
+      <div class="cards">
+        <div class="card">
+          <h3>👀 Glanceable</h3>
+          <p>See your remaining quota without switching away from your work or opening a browser.</p>
+        </div>
+        <div class="card">
+          <h3>🔀 Unified providers</h3>
+          <p>Volcano (5h / 7d / 30d windows), DeepSeek (balance) and Kimi Code (weekly quota) rendered homogeneously; click for a full dashboard.</p>
+        </div>
+        <div class="card">
+          <h3>🔮 Prediction over reporting</h3>
+          <p>Computes ETA from burn rate — “at the current pace, your 5h quota has 12 minutes left.” Know before it happens.</p>
+        </div>
+        <div class="card">
+          <h3>🌱 Low-overhead resident</h3>
+          <p>Native SwiftUI + AppKit, tiny resident memory and CPU; never steals focus.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Supported providers</h2>
+      <p class="sub">Adapter-first architecture: every provider maps onto one unified quota model.</p>
+      <table>
+        <thead>
+          <tr><th>Provider</th><th>What is shown</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Volcano Engine (火山引擎)</td><td>5h / 7d / 30d rolling windows</td><td>✅ real-verified</td></tr>
+          <tr><td>DeepSeek</td><td>Pure account balance (¥)</td><td>✅ real-verified</td></tr>
+          <tr><td>Kimi Code</td><td>Weekly quota + rolling rate windows</td><td>✅ real-verified</td></tr>
+          <tr><td>MiMo · Zhipu</td><td>Quota / balance</td><td>🚧 added, verify</td></tr>
+          <tr><td>OpenAI · Anthropic</td><td>Quota / balance</td><td>🔜 planned</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Install</h2>
+      <p class="sub">Build from source (Homebrew cask pending notarization).</p>
+      <pre><span class="c"># build</span>
+git clone https://github.com/kungf/token-runway.git
+cd token-runway
+swift build</pre>
+      <pre><span class="c"># credentials — outside the repo, in ~/.trwy/config.json (chmod 600)</span>
+<span class="c"># { "providers": { "deepseek": { "token": "sk-..." }, "volcano": { "ak": "...", "sk": "..." } } }</span></pre>
+      <pre><span class="c"># verify with the CLI</span>
+.build/debug/trwyctl all</pre>
+      <pre><span class="c"># package &amp; run</span>
+./Scripts/make-app.sh
+open build/TokenRunway.app</pre>
+      <p class="note">No credentials? Run the real UI with synthetic data: <code>TRWY_MOCK=mixed open build/TokenRunway.app</code> (scenarios: healthy · warning · critical · exhausted · mixed · balance-critical).</p>
+    </section>
+
+    <section>
+      <h2>Interactions</h2>
+      <table>
+        <thead>
+          <tr><th>Gesture</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>hover</td><td>floating summary (provider + per-window percentages)</td></tr>
+          <tr><td>click</td><td>open dashboard (all providers at a glance)</td></tr>
+          <tr><td>scroll</td><td>cycle core liquid between 5h ↔ 7d (outer monthly ring unchanged)</td></tr>
+          <tr><td>drag</td><td>move the ball; snaps to nearest screen edge on release</td></tr>
+          <tr><td>right-click</td><td>menu (refresh / pause / settings / hide)</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <p>TokenRunway is <a href="https://github.com/kungf/token-runway">open source</a> (MIT) · <a href="https://github.com/kungf/token-runway/blob/main/docs/DESIGN.md">Design doc</a> · <a href="https://github.com/kungf/token-runway/blob/main/docs/ROADMAP.md">Roadmap</a></p>
+    <p style="margin-top:6px">Not affiliated with Volcano, DeepSeek or Kimi. API keys stay on your machine.</p>
+  </footer>
+</body>
+</html>
