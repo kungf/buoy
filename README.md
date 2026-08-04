@@ -57,42 +57,13 @@ cd token-runway
 swift build
 ```
 
-**2. Configure credentials**
-
-Credentials live **outside** the repo in `~/.trwy/config.json` (chmod 600, gitignored, never committed):
-
-```json
-{
-  "providers": {
-    "deepseek": { "token": "sk-your-deepseek-api-key" },
-    "volcano":  { "ak": "your-volc-AccessKey", "sk": "your-volc-SecretKey" },
-    "zhipu":    { "token": "your-zhipu-api-key" },
-    "minimax":  { "token": "your-minimax-api-key" }
-  }
-}
-```
-
-> **Volcano note**: you need IAM **AccessKey + SecretKey** (console → Access Control IAM → Key Management), **not** an ARK inference API key. An `ark-` key hitting the control-plane OpenAPI returns 401.
->
-> **Kimi Code note**: zero configuration — it reuses the local Kimi Code CLI login (`~/.kimi-code/credentials/kimi-code.json`, or `$KIMI_CODE_HOME`). If you haven't logged in, run `kimi` and execute `/login` first. Nothing is stored in `~/.trwy/config.json` for this provider.
->
-> **MiMo note**: no API key — sign in with the console session in the app's settings (WKWebView login); the session cookies are stored in `~/.trwy/config.json` (`cookieToken` / `cookieUserId`).
->
-> **MiniMax note**: use a **Token Plan / Coding Plan subscription key** (platform → user center → interface keys) — a pay-as-you-go API key has no plan quota and the endpoint returns unauthorized.
-
-**3. Verify with the CLI**
+**2. Verify with the CLI**
 
 ```sh
 .build/debug/trwyctl all      # fetches all configured providers once, prints quotas
 ```
 
-Credential priority: env vars > `~/.trwy/config.json`:
-- `TRWY_DEEPSEEK_TOKEN`
-- `TRWY_VOLC_AK` / `TRWY_VOLC_SK`
-- `TRWY_ZHIPU_TOKEN`
-- `TRWY_MINIMAX_TOKEN`
-
-**4. Package & run**
+**3. Package & run**
 
 ```sh
 ./Scripts/make-app.sh         # produces build/TokenRunway.app (LSUIElement background agent)
