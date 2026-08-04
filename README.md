@@ -22,17 +22,22 @@
 - **Prediction over reporting**: computes ETA from burn rate ("at the current pace, your 5h quota has 12 minutes left"), attacking the pain of "my 5-hour quota burned out in 10 minutes before I noticed."
 - **Low-overhead resident**: native SwiftUI + AppKit, tiny resident memory and CPU; never steals focus.
 
-## Status
+## Providers
 
-🚧 **Pre-release / work in progress.** M0 skeleton + M1 dual adapters + Phase 1 prediction are done and runnable on real hardware.
+Adapter-first architecture: every provider maps onto one unified `Quota` model.
 
-| Done | TODO |
+**Done (real-verified)**
+
+| Provider | What is shown |
 |---|---|
-| Floating ball (outer ring + core liquid + breathing/wave animation) | Keychain credential storage (currently config.json) |
-| Dashboard accordion + ETA + sparkline | Alert notifications (AlertEngine + UserNotifications) |
-| 6 providers: Volcano · DeepSeek · Kimi Code · MiMo · Zhipu · MiniMax (real-verified) | Settings UI, menu bar, launch-at-login |
-| Burn rate / ETA wired to ball breathing & dashboard | OpenAI / Anthropic, sandbox & signing |
-| Volc Signature V4 signing + unified Quota model | (per-provider polling, backoff & persistence ✅) |
+| Volcano Engine (火山引擎) | 5h / 7d / 30d rolling windows |
+| DeepSeek | Pure account balance (¥) |
+| Kimi Code | Weekly quota + rolling rate windows |
+| MiMo | Monthly Token Plan |
+| Zhipu | Monthly / weekly token quotas |
+| MiniMax | 5h rolling window + weekly |
+
+**Not yet**: OpenAI · Anthropic — planned next.
 
 Full roadmap in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -57,13 +62,7 @@ cd token-runway
 swift build
 ```
 
-**2. Verify with the CLI**
-
-```sh
-.build/debug/trwyctl all      # fetches all configured providers once, prints quotas
-```
-
-**3. Package & run**
+**2. Package & run**
 
 ```sh
 ./Scripts/make-app.sh         # produces build/TokenRunway.app (LSUIElement background agent)
@@ -105,7 +104,7 @@ This enables Hardened Runtime with a network-client entitlement. Notarization an
 Adapter-first: all provider differences are contained in the adapter layer; the upper UI / scheduling / prediction only knows the unified `Quota` model.
 
 ```
-UI           FloatingBall (NSPanel) · Dashboard (accordion) · [Settings WIP]
+UI           FloatingBall (NSPanel) · Dashboard (accordion) · Settings (per-provider sheet)
               │ subscribes @Published
 Service      UsageStore (ObservableObject) · ForecastEngine (burn rate/ETA)
               │ scheduling                    │ credentials
@@ -114,10 +113,9 @@ Adapter      Provider protocol · Volcano(V4) · DeepSeek(bearer) · Kimi Code(l
 Core         Quota model · VolcSigner · HTTPClient · CredentialStore
 ```
 
-Four SPM targets:
+Three SPM targets:
 - **TokenRunwayCore** (Foundation-only, zero AppKit/SwiftUI) — model / auth / forecast / providers / networking
 - **TokenRunwayApp** — floating ball + dashboard UI
-- **trwyctl** — adapter integration CLI
 - **TokenRunwayCoreTests** — unit tests (160/160)
 
 ## Security
