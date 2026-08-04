@@ -10,6 +10,7 @@ public enum ProviderRegistry {
         KimiProvider(),
         MiMoProvider(),
         ZhipuProvider(),
+        MiniMaxProvider(),
     ]
 
     public static var ids: [String] { all.map { $0.manifest.id } }
