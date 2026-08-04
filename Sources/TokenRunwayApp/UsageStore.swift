@@ -423,8 +423,9 @@ final class UsageStore: ObservableObject {
             if providerErrors[providerId] == Self.notConfiguredError { return .notConfigured }
             return providerErrors[providerId] != nil ? .error : .idle
         }
-        // 拉取错误优先（与 BallStateResolver 的 error 最高优先级一致）：
-        // cookie 过期(401) 等瞬时错误应显示 error 而非永久态 expired，避免误导
+        // Fetch errors take precedence (consistent with BallStateResolver's error being
+        // highest priority): transient errors like expired cookies (401) must show error
+        // rather than the permanent expired state, to avoid misleading
         if providerErrors[providerId] != nil { return .error }
         if report.planExpired == true { return .expired }
         let interval = pollInterval(forProvider: providerId)

@@ -1,19 +1,19 @@
 import Foundation
 
-/// 计费形态（DESIGN.md §3.1）
+/// Billing shape (DESIGN.md §3.1)
 public enum QuotaType: String, Codable, Sendable {
-    /// 滚动时间窗：有 windowStart/End，到点 reset（火山 5h/7d/30d、MiMo 月度等）
+    /// Rolling time window: has windowStart/End, resets when due (Volcano 5h/7d/30d, MiMo monthly, etc.)
     case timeWindowed
-    /// 余额型：纯账户余额，无时间窗 reset（DeepSeek）
+    /// Balance: pure account balance, no time-window reset (DeepSeek)
     case balance
-    /// 速率限制：TPM/RPM（MVP 不接）
+    /// Rate limit: TPM/RPM (not wired in the MVP)
     case rateLimit
 }
 
 /// Measurement unit. Units must not be summed across providers (DESIGN.md §3.2)
 public enum Unit: Codable, Sendable, Equatable {
     case tokens
-    /// 火山 AFP 点数
+    /// Volcano AFP points
     case credits
     case usd
     case cny
@@ -75,26 +75,27 @@ public enum Unit: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey { case custom }
 }
 
-/// 统一额度模型（DESIGN.md §3.2）。
-/// 派生量（percent / eta / healthScore）由上层计算，不存于此，保持值类型纯净。
+/// Unified quota model (DESIGN.md §3.2).
+/// Derived values (percent / eta / healthScore) are computed upstream, not stored here,
+/// keeping the value type pure.
 public struct Quota: Identifiable, Codable, Sendable, Equatable {
-    /// 如 "volcano.5h" / "deepseek.balance"
+    /// e.g. "volcano.5h" / "deepseek.balance"
     public let id: String
     public let type: QuotaType
-    /// 展示名，如 "5 小时额度" / "账户余额"
+    /// Display label, e.g. "5-hour quota" / "account balance"
     public let label: String
     public let unit: Unit
 
-    /// 已用（部分 provider 只给 used，无 limit）
+    /// Used (some providers only expose used, without a limit)
     public let used: Double?
-    /// 上限（nil = 无上限 / 未知）
+    /// Cap (nil = no cap / unknown)
     public let limit: Double?
-    /// 剩余（部分 provider 直接给）
+    /// Remaining (some providers give it directly)
     public let remaining: Double?
 
-    /// 仅 timeWindowed
+    /// timeWindowed only
     public let windowStart: Date?
-    /// 窗口结束 / reset 时刻
+    /// Window end / reset time
     public let resetsAt: Date?
     /// Water-level direction (only meaningful for timeWindowed): true = used proportion
     /// (used/limit, full = drained, custom-metric used semantics); false = remaining
@@ -145,7 +146,8 @@ public struct Quota: Identifiable, Codable, Sendable, Equatable {
 }
 
 public extension Quota {
-    /// 已用比例 [0, 1]。limit 缺失或为 0 时返回 nil（Quota=0 的窗口不应存在，见 VolcanoProvider）。
+    /// Used proportion [0, 1]. nil when limit is missing or 0 (a Quota=0 window should not
+    /// exist — see VolcanoProvider).
     var percentUsed: Double? {
         if let used, let limit, limit > 0 {
             return min(max(used / limit, 0), 1)
@@ -156,7 +158,7 @@ public extension Quota {
         return nil
     }
 
-    /// 剩余量（优先显式 remaining，其次 limit - used）
+    /// Remaining amount (explicit remaining first, else limit - used)
     var effectiveRemaining: Double? {
         if let remaining { return remaining }
         if let used, let limit { return max(limit - used, 0) }

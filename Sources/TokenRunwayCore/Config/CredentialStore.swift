@@ -1,8 +1,8 @@
 import Foundation
 
-/// ~/.trwy/config.json 的单 provider 条目。字段按 auth 模式取用：
-/// bearer → token；volcSignature → ak/sk；consoleSession → cookieToken/cookieUserId；
-/// apiKey/baseURL 保留给推理类接口。
+/// One provider entry in ~/.trwy/config.json. Fields are used per auth mode:
+/// bearer → token; volcSignature → ak/sk; consoleSession → cookieToken/cookieUserId;
+/// apiKey/baseURL reserved for inference-style APIs.
 public struct ProviderCredentials: Codable, Sendable, Equatable {
     public var auth: String?
     public var token: String?
@@ -10,7 +10,7 @@ public struct ProviderCredentials: Codable, Sendable, Equatable {
     public var sk: String?
     public var apiKey: String?
     public var baseURL: String?
-    /// consoleSession：浏览器 SSO 会话 cookie（如 MiMo 的 api-platform_serviceToken / userId）
+    /// consoleSession: browser SSO session cookies (e.g. MiMo api-platform_serviceToken / userId)
     public var cookieToken: String?
     public var cookieUserId: String?
 
@@ -28,7 +28,7 @@ public struct ProviderCredentials: Codable, Sendable, Equatable {
     }
 }
 
-/// 凭证配置文件（chmod 600，仓库外；M2 迁移 Keychain，DESIGN.md §10）
+/// Credential config file (chmod 600, outside the repo; M2 migrates to Keychain, DESIGN.md §10)
 public struct TokenRunwayConfigFile: Codable, Sendable, Equatable {
     public var providers: [String: ProviderCredentials]
     /// User custom-metric configs (non-secret; tokens still go via providers[<id>].token).
@@ -75,7 +75,7 @@ public enum CustomMetricConfigStore {
     }
 }
 
-/// 凭证加载与映射。token 绝不打印、不写日志。
+/// Credential loading and mapping. Tokens are never printed or logged.
 public enum CredentialStore {
     /// Config path. get-set: tests can redirect to a temp file (default ~/.trwy/config.json)
     public static var defaultURL: URL {
@@ -106,8 +106,8 @@ public enum CredentialStore {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    /// 条目 → 统一 Credential。ak/sk 齐备优先 volcAccessKey，其次 bearer token，
-    /// 其次 consoleSession 会话 cookie。
+    /// Entry → unified Credential. Complete ak/sk wins (volcAccessKey), then bearer token,
+    /// then consoleSession cookies.
     public static func credential(for providerId: String, from config: TokenRunwayConfigFile?) -> Credential? {
         guard let entry = config?.providers[providerId] else { return nil }
         if let ak = entry.ak, let sk = entry.sk, !ak.isEmpty, !sk.isEmpty {
@@ -123,12 +123,13 @@ public enum CredentialStore {
         return nil
     }
 
-    /// localCLI 模式：不读 ~/.trwy/config.json，凭证指向本机 CLI 的 OAuth 登录态目录
-    ///（KIMI_CODE_HOME 或 ~/.kimi-code），由适配器读取/刷新。
-    /// CLI 凭证文件不存在（= 未登录）时返回 nil：上层据此映射为 not-configured，
-    /// Dashboard 才会显示齿轮按钮（打开含 /login 指引的设置页），而不是误导性的
-    /// "Auth failed (check key)"。注意只判文件存在性，不判 token 新鲜度——
-    /// "文件存在但 token 过期"是正常路径，交由适配器刷新。
+    /// localCLI mode: does not read ~/.trwy/config.json; the credential points at the local
+    /// CLI's OAuth login directory (KIMI_CODE_HOME or ~/.kimi-code), read/refreshed by the
+    /// adapter. Returns nil when the CLI credential file is missing (= not logged in): the
+    /// upper layer maps that to not-configured so the Dashboard shows the gear button (opening
+    /// the settings page with /login guidance) instead of a misleading "Auth failed (check
+    /// key)". Only existence is checked, not freshness — "file exists but token expired" is
+    /// the normal path and is left to the adapter to refresh.
     public static func localCLICredential(home: URL = KimiCLICredentialStore.defaultHome) -> Credential? {
         let credentialsFile = home.appendingPathComponent("credentials/kimi-code.json")
         guard FileManager.default.fileExists(atPath: credentialsFile.path) else { return nil }

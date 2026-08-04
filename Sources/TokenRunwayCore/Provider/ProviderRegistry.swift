@@ -1,9 +1,10 @@
 import Foundation
 
-/// "哪些 provider 存在"的唯一事实源。`UsageStore`、`trwyctl`、Dashboard 均从此读取，
-/// 新增 provider 只需在此注册一行（外加其 adapter 文件与 logo 资源），不再维护并行清单。
+/// Single source of truth for "which providers exist". `UsageStore`, `trwyctl` and the
+/// Dashboard all read from here; adding a provider means registering one line (plus its
+/// adapter file and logo asset) — no parallel lists to maintain.
 public enum ProviderRegistry {
-    /// Provider 初始化顺序（稳定：决定"第一个球"与簇内排列）。
+    /// Provider init order (stable: decides "the first ball" and the cluster arrangement).
     public static let all: [any Provider] = [
         VolcanoProvider(),
         DeepSeekProvider(),

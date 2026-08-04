@@ -155,7 +155,7 @@ struct ProviderSettingsView: View {
         }
     }
 
-    // MARK: - consoleSession (MiMo)：内嵌 WebView 登录，会话 cookie 自维护
+    // MARK: - consoleSession (MiMo): embedded WebView login, session cookie self-maintained
 
     private var consoleSessionFields: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -198,7 +198,7 @@ struct ProviderSettingsView: View {
         }
     }
 
-    // MARK: - localCLI (Kimi Code)：无需输入，自动复用本机 CLI 登录态
+    // MARK: - localCLI (Kimi Code): no input needed, reuses the local CLI login state
 
     private var localCLIFields: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -319,7 +319,7 @@ struct ProviderSettingsView: View {
         case .volcSignature: return !ak.trimmingCharacters(in: .whitespaces).isEmpty
             && !sk.trimmingCharacters(in: .whitespaces).isEmpty
         case .consoleSession: return false
-        case .localCLI: return false   // 无需填写，直接关闭即可
+        case .localCLI: return false   // nothing to fill in — just close
         case .none: return true
         }
     }
@@ -360,7 +360,7 @@ struct ProviderSettingsView: View {
         case .consoleSession:
             break
         case .localCLI:
-            break   // 不写 config.json：登录态在本机 CLI 凭证文件里
+            break   // don't write config.json: the login state lives in the local CLI credential file
         case .none:
             break
         }

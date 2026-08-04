@@ -64,7 +64,7 @@ final class CredentialStoreTests: XCTestCase {
     }
 
     func testLoadReturnsNilForMissingFile() {
-        XCTAssertNil(CredentialStore.load(from: tempURL)) // 未写入任何文件
+        XCTAssertNil(CredentialStore.load(from: tempURL)) // nothing written yet
     }
 
     func testSaveRoundTrip() throws {

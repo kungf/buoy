@@ -1,14 +1,14 @@
 import Foundation
 import TokenRunwayCore
 
-/// trwyctl - 适配器联调 harness。
-/// 凭证来源（优先级从高到低；绝不打印、不写盘、不入仓库）：
+/// trwyctl — adapter integration harness.
+/// Credential sources (highest priority first; never printed, persisted, or committed):
 ///   bearer:        env TRWY_<envPrefix>_TOKEN
 ///   volcSignature: env TRWY_<envPrefix>_AK / TRWY_<envPrefix>_SK
-///   -> ~/.trwy/config.json（CredentialStore）
-/// envPrefix 取自 manifest（DeepSeek=DEEPSEEK，火山=VOLC）；用法: trwyctl <id> | all
+///   -> ~/.trwy/config.json (CredentialStore)
+/// envPrefix comes from the manifest (DeepSeek=DEEPSEEK, Volcano=VOLC); usage: trwyctl <id> | all
 
-/// 拼出 env 变量前缀，如 "TRWY_DEEPSEEK_" / "TRWY_VOLC_"。
+/// Builds the env-var prefix, e.g. "TRWY_DEEPSEEK_" / "TRWY_VOLC_".
 private func envVarPrefix(for provider: any Provider) -> String {
     "TRWY_\(provider.manifest.envPrefix)_"
 }
@@ -27,7 +27,7 @@ func envCredential(for provider: any Provider) -> Credential? {
     case .consoleSession:
         break
     case .localCLI:
-        // 无 env 变量：登录态直接来自本机 CLI 凭证文件
+        // No env var: the login state comes straight from the local CLI credential file
         break
     case .none:
         break
